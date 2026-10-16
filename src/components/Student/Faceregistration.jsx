@@ -1,21 +1,7 @@
-import React, { useState } from "react";
-import { Link } from "react-router-dom";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import {
-  Home,
   ScanFace,
-  History,
-  UserPlus,
-  BookOpen,
-  CalendarDays,
-  User,
-  Settings,
-  Megaphone,
-  LogOut,
-  Menu,
-  Search,
-  Bell,
-  ChevronDown,
-  ShieldCheck,
   Camera,
   Eye,
   Sun,
@@ -25,388 +11,459 @@ import {
   Info,
   Lock,
   Check,
+  RotateCcw,
+  Loader2,
+  CheckCircle2,
+  AlertTriangle,
 } from "lucide-react";
-import logoImg from "../../assets/logo-cs.png";
-
-const navItems = [
-  { icon: Home, label: "หน้าหลัก", to: "/dashboard" },
-  { icon: ScanFace, label: "เช็คชื่อ", to: "/checkin" },
-  { icon: History, label: "ประวัติการเช็คชื่อ", to: "/history" },
-  { icon: UserPlus, label: "ลงทะเบียนใบหน้า", to: "/face-registration", active: true },
-  { icon: BookOpen, label: "วิชาเรียนของฉัน", to: "/courses" },
-  { icon: CalendarDays, label: "ตารางเรียน", to: "/schedule" },
-  { icon: Megaphone, label: "ประกาศ", to: "/announcements" },
-  { icon: User, label: "โปรไฟล์", to: "/profile" },
-  { icon: Settings, label: "ตั้งค่า", to: "/settings" },
-];
+import StudentLayout from "./StudentLayout";
+import { faceStore } from "./studentData";
+import { t } from "./i18n";
 
 const steps = [
-  { n: 1, title: "เตรียมพร้อม", sub: "ตรวจสอบสภาพแวดล้อม" },
-  { n: 2, title: "บันทึกใบหน้า", sub: "เก็บข้อมูลใบหน้า" },
-  { n: 3, title: "ตรวจสอบข้อมูล", sub: "ตรวจสอบความถูกต้อง" },
-  { n: 4, title: "เสร็จสิ้น", sub: "ลงทะเบียนสำเร็จ" },
+  { n: 1, title: t("เตรียมพร้อม"), sub: t("ตรวจสอบสภาพแวดล้อม") },
+  { n: 2, title: t("บันทึกใบหน้า"), sub: t("เก็บข้อมูลใบหน้า") },
+  { n: 3, title: t("ตรวจสอบข้อมูล"), sub: t("ตรวจสอบความถูกต้อง") },
+  { n: 4, title: t("เสร็จสิ้น"), sub: t("ลงทะเบียนสำเร็จ") },
 ];
 
 const guidelines = [
-  { icon: Eye, label: "มองตรงไปที่กล้อง" },
-  { icon: ScanFace, label: "ใบหน้าอยู่ในกรอบ" },
-  { icon: Sun, label: "แสงสว่างเพียงพอ" },
-  { icon: Glasses, label: "ไม่สวมแว่นตา" },
-  { icon: VenetianMask, label: "ไม่สวมหน้ากาก" },
-  { icon: MoveHorizontal, label: "ไม่หันหน้าไปด้านข้าง" },
+  { icon: Eye, label: t("มองตรงไปที่กล้อง") },
+  { icon: ScanFace, label: t("ใบหน้าอยู่ในกรอบ") },
+  { icon: Sun, label: t("แสงสว่างเพียงพอ") },
+  { icon: Glasses, label: t("ไม่สวมแว่นตา") },
+  { icon: VenetianMask, label: t("ไม่สวมหน้ากาก") },
+  { icon: MoveHorizontal, label: t("ไม่หันหน้าไปด้านข้าง") },
 ];
 
-// Placeholder pose examples — swap with real student photos later
-const posePlaceholders = [
-  {
-    label: "มองตรง",
-    good: true,
-    src: "https://images.unsplash.com/photo-1633332755192-727a05c4013d?w=200&h=200&fit=crop&crop=faces",
-  },
-  {
-    label: "หันซ้าย 45°",
-    src: "https://images.unsplash.com/photo-1633332755192-727a05c4013d?w=200&h=200&fit=crop&crop=faces&sig=2",
-  },
-  {
-    label: "หันขวา 45°",
-    src: "https://images.unsplash.com/photo-1633332755192-727a05c4013d?w=200&h=200&fit=crop&crop=faces&sig=3",
-  },
-  {
-    label: "เงยหน้าเล็กน้อย",
-    src: "https://images.unsplash.com/photo-1633332755192-727a05c4013d?w=200&h=200&fit=crop&crop=faces&sig=4",
-  },
+// ท่าที่ต้องถ่าย ตามลำดับ
+const POSES = [
+  { label: t("มองตรง"), hint: t("มองตรงไปที่กล้อง") },
+  { label: t("หันซ้าย 45°"), hint: t("หันหน้าไปทางซ้ายเล็กน้อย") },
+  { label: t("หันขวา 45°"), hint: t("หันหน้าไปทางขวาเล็กน้อย") },
+  { label: t("เงยหน้าเล็กน้อย"), hint: t("เงยหน้าขึ้นเล็กน้อย") },
 ];
+
+const PLACEHOLDER = "https://images.unsplash.com/photo-1633332755192-727a05c4013d?w=200&h=200&fit=crop&crop=faces";
 
 export default function FaceRegistration() {
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const currentStep = 1;
+  const navigate = useNavigate();
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+  const [currentStep, setCurrentStep] = useState(1);
+  const [shots, setShots] = useState([]); // รูปที่ถ่ายแล้ว (data URL)
+  const [cameraError, setCameraError] = useState(null);
+  const [cameraReady, setCameraReady] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [flash, setFlash] = useState(false);
+  const [cameraKey, setCameraKey] = useState(0); // เพิ่มค่าเพื่อเปิดกล้องใหม่
+
+  const cameraOn = currentStep <= 2;
+
+  const stopCamera = useCallback(() => {
+    streamRef.current?.getTracks().forEach((tr) => tr.stop());
+    streamRef.current = null;
+    setCameraReady(false);
+  }, []);
+
+  // เปิดกล้องเฉพาะขั้นตอนที่ 1-2
+  useEffect(() => {
+    if (!cameraOn) return undefined;
+    let cancelled = false;
+    setCameraError(null);
+    (async () => {
+      try {
+        if (!navigator.mediaDevices?.getUserMedia) throw new Error(t("เบราว์เซอร์นี้ไม่รองรับการใช้กล้อง"));
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "user", width: { ideal: 800 }, height: { ideal: 600 } },
+          audio: false,
+        });
+        if (cancelled) {
+          stream.getTracks().forEach((tr) => tr.stop());
+          return;
+        }
+        streamRef.current = stream;
+        if (videoRef.current) videoRef.current.srcObject = stream;
+        setCameraReady(true);
+      } catch (err) {
+        if (!cancelled) setCameraError(err.message || t("ไม่สามารถเปิดกล้องได้"));
+      }
+    })();
+    return () => {
+      cancelled = true;
+      stopCamera();
+    };
+  }, [cameraOn, cameraKey, stopCamera]);
+
+  // ผูก stream เข้ากับ <video> ทุกครั้งที่ video ถูกสร้างใหม่ (เช่นหลังกด "ลองอีกครั้ง")
+  useEffect(() => {
+    if (cameraReady && videoRef.current && streamRef.current && videoRef.current.srcObject !== streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+    }
+  }, [cameraReady, cameraError, currentStep]);
+
+  const capture = () => {
+    const video = videoRef.current;
+    if (!video || !video.videoWidth) return;
+    const size = Math.min(video.videoWidth, video.videoHeight);
+    const canvas = document.createElement("canvas");
+    canvas.width = 320;
+    canvas.height = 320;
+    const ctx = canvas.getContext("2d");
+    // กลับด้านให้ตรงกับภาพที่ผู้ใช้เห็น (กล้องหน้าแสดงแบบกระจก)
+    ctx.translate(320, 0);
+    ctx.scale(-1, 1);
+    ctx.drawImage(video, (video.videoWidth - size) / 2, (video.videoHeight - size) / 2, size, size, 0, 0, 320, 320);
+    const next = [...shots, canvas.toDataURL("image/jpeg", 0.85)];
+    setShots(next);
+    setFlash(true);
+    setTimeout(() => setFlash(false), 150);
+    if (next.length === POSES.length) setCurrentStep(3);
+  };
+
+  const retakeLast = () => setShots((s) => s.slice(0, -1));
+  const restart = () => {
+    setShots([]);
+    setCurrentStep(2);
+  };
+
+  const cancel = () => {
+    if (shots.length && !window.confirm(t("ยกเลิกการลงทะเบียนใบหน้า? รูปที่ถ่ายไว้จะหายไป"))) return;
+    stopCamera();
+    navigate("/profile");
+  };
+
+  // TODO: เมื่อเชื่อม backend แล้ว ให้อัปโหลด shots ไปที่ API ลงทะเบียนใบหน้า
+  const submit = () => {
+    setSaving(true);
+    setTimeout(() => {
+      const now = new Date();
+      const isoDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      faceStore.set({
+        registered: true,
+        at: `${isoDate(now)}T${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`,
+      });
+      setSaving(false);
+      setCurrentStep(4);
+    }, 1000);
+  };
+
+  const progress = currentStep === 4 ? 100 : currentStep === 3 ? 90 : Math.round((shots.length / POSES.length) * 80);
+  const progressText =
+    currentStep === 1
+      ? [t("ยังไม่ได้เริ่มต้น"), t("กรุณาเริ่มบันทึกใบหน้า")]
+      : currentStep === 2
+      ? [t("ถ่ายแล้ว {n}/{total} ท่า", { n: shots.length, total: POSES.length }), t("ท่าถัดไป: {pose}", { pose: POSES[shots.length]?.label })]
+      : currentStep === 3
+      ? [t("ถ่ายครบแล้ว"), t("กรุณาตรวจสอบรูปก่อนยืนยัน")]
+      : [t("ลงทะเบียนสำเร็จ"), t("พร้อมใช้งานเช็คชื่อแล้ว")];
+  const circ = 2 * Math.PI * 52;
 
   return (
-    <div className="min-h-screen w-full bg-slate-50 font-sans flex">
-      {/* ---------- Sidebar ---------- */}
-      <aside
-        className={`${
-          sidebarOpen ? "w-64" : "w-0 lg:w-64"
-        } shrink-0 bg-white border-r border-slate-100 flex flex-col transition-all overflow-hidden`}
-      >
-        <div className="h-20 flex items-center gap-3 px-6 border-b border-slate-100 shrink-0">
-          <img src={logoImg} alt="CS FaceAttend" className="h-10 w-auto object-contain" />
-          <div className="leading-tight">
-            <div className="text-base font-bold text-slate-900 whitespace-nowrap">
-              CS FaceAttend
-            </div>
-            <div className="text-[10px] text-slate-400 whitespace-nowrap">
-              Computer Science AI Face Attendance System
-            </div>
-          </div>
-        </div>
+    <StudentLayout>
+      {/* Title */}
+      <div>
+        <h1 className="text-2xl font-bold text-slate-900">{t("ลงทะเบียนใบหน้า")}</h1>
+        <p className="text-sm text-slate-500 mt-1">{t("ลงทะเบียนใบหน้าเพื่อใช้สำหรับการเช็คชื่อเข้าเรียน")}</p>
+      </div>
 
-        <nav className="flex-1 px-4 py-6 space-y-1.5 overflow-y-auto">
-          {navItems.map(({ icon: Icon, label, to, active }) => (
-            <Link
-              key={label}
-              to={to}
-              className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-colors whitespace-nowrap ${
-                active
-                  ? "bg-blue-50 text-blue-600"
-                  : "text-slate-500 hover:bg-slate-50 hover:text-slate-700"
-              }`}
-            >
-              <Icon className="w-5 h-5 shrink-0" />
-              {label}
-            </Link>
+      {/* Step indicator */}
+      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm px-6 py-6 overflow-x-auto">
+        <div className="flex items-center min-w-[560px]">
+          {steps.map((s, i) => (
+            <React.Fragment key={s.n}>
+              <div className="flex items-center gap-3">
+                <div
+                  className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold shrink-0 ${
+                    s.n === currentStep && currentStep !== 4
+                      ? "bg-blue-600 text-white"
+                      : s.n < currentStep || currentStep === 4
+                      ? "bg-emerald-500 text-white"
+                      : "bg-slate-100 text-slate-400"
+                  }`}
+                >
+                  {s.n < currentStep || currentStep === 4 ? <Check className="w-4 h-4" /> : s.n}
+                </div>
+                <div className="hidden sm:block">
+                  <div className={`text-sm font-semibold ${s.n === currentStep ? "text-slate-900" : "text-slate-400"}`}>{s.title}</div>
+                  <div className="text-xs text-slate-400">{s.sub}</div>
+                </div>
+              </div>
+              {i < steps.length - 1 && <div className={`flex-1 h-px mx-4 ${s.n < currentStep ? "bg-emerald-300" : "bg-slate-200"}`} />}
+            </React.Fragment>
           ))}
-        </nav>
-
-        <div className="px-4 pb-4">
-          <Link
-            to="/login"
-            className="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-red-500 hover:bg-red-50 transition-colors whitespace-nowrap"
-          >
-            <LogOut className="w-5 h-5 shrink-0" />
-            ออกจากระบบ
-          </Link>
         </div>
+      </div>
 
-        <div className="p-4">
-          <div className="rounded-2xl bg-blue-50 border border-blue-100 p-4">
-            <div className="flex items-start gap-3">
-              <div className="w-9 h-9 rounded-full bg-blue-600 flex items-center justify-center shrink-0">
-                <ShieldCheck className="w-5 h-5 text-white" />
-              </div>
-              <div className="min-w-0">
-                <div className="text-sm font-semibold text-slate-800 whitespace-nowrap">
-                  ระบบปลอดภัย
-                </div>
-                <div className="text-xs text-slate-500 leading-snug mt-0.5">
-                  ข้อมูลของคุณได้รับการปกป้องอย่างปลอดภัย
-                </div>
-              </div>
-            </div>
-            <div className="flex items-center gap-1.5 mt-3">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span className="text-xs font-medium text-emerald-600">ออนไลน์</span>
-            </div>
-          </div>
-        </div>
-      </aside>
+      {/* Main content + side cards */}
+      <div className="grid grid-cols-1 lg:grid-cols-[1.7fr_1fr] gap-5">
+        <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
+          <h3 className="font-bold text-slate-900">
+            {t("ขั้นตอนที่ {n}: {title}", { n: currentStep, title: steps[currentStep - 1].title })}
+          </h3>
+          <p className="text-sm text-slate-500 mt-1 mb-5">
+            {currentStep === 1 && t("กรุณาจัดตำแหน่งใบหน้าให้อยู่ในกรอบ และอยู่ในสภาพแวดล้อมที่เหมาะสม")}
+            {currentStep === 2 && t("ท่าที่ {n}/{total}: {hint} แล้วกด \"ถ่ายภาพ\"", { n: shots.length + 1, total: POSES.length, hint: POSES[shots.length]?.hint })}
+            {currentStep === 3 && t("ตรวจสอบว่ารูปทุกท่าเห็นใบหน้าชัดเจน แล้วกดยืนยัน")}
+            {currentStep === 4 && t("บันทึกข้อมูลใบหน้าเรียบร้อยแล้ว คุณสามารถเช็คชื่อด้วยใบหน้าได้ทันที")}
+          </p>
 
-      {/* ---------- Main ---------- */}
-      <div className="flex-1 flex flex-col min-w-0">
-        {/* Header */}
-        <header className="h-20 bg-white border-b border-slate-100 flex items-center gap-4 px-6 shrink-0">
-          <button
-            onClick={() => setSidebarOpen((v) => !v)}
-            className="w-10 h-10 flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 transition-colors shrink-0"
-            aria-label="สลับเมนู"
-          >
-            <Menu className="w-5 h-5" />
-          </button>
-
-          <div className="relative flex-1 max-w-md">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <input
-              type="text"
-              placeholder="ค้นหา..."
-              className="w-full pl-11 pr-4 py-2.5 rounded-xl bg-slate-100 text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-200"
-            />
-          </div>
-
-          <div className="flex-1" />
-
-          <button className="relative w-10 h-10 flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 transition-colors shrink-0">
-            <Bell className="w-5 h-5" />
-            <span className="absolute top-1.5 right-1.5 w-4 h-4 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
-              3
-            </span>
-          </button>
-
-          <button className="flex items-center gap-2.5 pl-2 shrink-0">
-            <img
-              src="https://images.unsplash.com/photo-1633332755192-727a05c4013d?w=100&h=100&fit=crop&crop=faces"
-              alt="นายกฤษฎา ใจดี"
-              className="w-10 h-10 rounded-full object-cover"
-            />
-            <div className="text-left hidden sm:block">
-              <div className="text-sm font-semibold text-slate-800 whitespace-nowrap">
-                นายกฤษฎา ใจดี
-              </div>
-              <div className="text-xs text-slate-400 whitespace-nowrap">นักศึกษา</div>
-            </div>
-            <ChevronDown className="w-4 h-4 text-slate-400 hidden sm:block" />
-          </button>
-        </header>
-
-        {/* Body */}
-        <main className="flex-1 overflow-y-auto p-6 space-y-6">
-          {/* Title */}
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900">ลงทะเบียนใบหน้า</h1>
-            <p className="text-sm text-slate-500 mt-1">
-              ลงทะเบียนใบหน้าเพื่อใช้สำหรับการเช็คชื่อเข้าเรียน
-            </p>
-          </div>
-
-          {/* Step indicator */}
-          <div className="bg-white rounded-2xl border border-slate-100 shadow-sm px-6 py-6 overflow-x-auto">
-            <div className="flex items-center min-w-[560px]">
-              {steps.map((s, i) => (
-                <React.Fragment key={s.n}>
-                  <div className="flex items-center gap-3">
-                    <div
-                      className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold shrink-0 ${
-                        s.n === currentStep
-                          ? "bg-blue-600 text-white"
-                          : s.n < currentStep
-                          ? "bg-emerald-500 text-white"
-                          : "bg-slate-100 text-slate-400"
-                      }`}
-                    >
-                      {s.n < currentStep ? <Check className="w-4 h-4" /> : s.n}
-                    </div>
-                    <div className="hidden sm:block">
-                      <div
-                        className={`text-sm font-semibold ${
-                          s.n === currentStep ? "text-slate-900" : "text-slate-400"
-                        }`}
+          {cameraOn && (
+            <div className="grid grid-cols-1 md:grid-cols-[1.5fr_1fr] gap-6">
+              {/* Camera preview */}
+              <div>
+                <div className="relative aspect-[4/3] rounded-2xl overflow-hidden bg-slate-900">
+                  {cameraError ? (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-center px-6">
+                      <Camera className="w-8 h-8 text-red-400" />
+                      <div className="text-sm font-semibold text-white">{t("ไม่สามารถเปิดกล้องได้")}</div>
+                      <div className="text-xs text-slate-400">{cameraError}</div>
+                      <button
+                        type="button"
+                        onClick={() => setCameraKey((k) => k + 1)}
+                        className="mt-1 px-4 py-2 rounded-full bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700"
                       >
-                        {s.title}
-                      </div>
-                      <div className="text-xs text-slate-400">{s.sub}</div>
+                        {t("ลองอีกครั้ง")}
+                      </button>
                     </div>
-                  </div>
-                  {i < steps.length - 1 && (
-                    <div className="flex-1 h-px bg-slate-200 mx-4" />
+                  ) : (
+                    <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" style={{ transform: "scaleX(-1)" }} />
                   )}
-                </React.Fragment>
-              ))}
-            </div>
-          </div>
-
-          {/* Main content + side cards */}
-          <div className="grid grid-cols-1 lg:grid-cols-[1.7fr_1fr] gap-5">
-            {/* Step content */}
-            <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
-              <h3 className="font-bold text-slate-900">ขั้นตอนที่ 1: เตรียมพร้อม</h3>
-              <p className="text-sm text-slate-500 mt-1 mb-5">
-                กรุณาจัดตำแหน่งใบหน้าให้อยู่ในกรอบ และอยู่ในสภาพแวดล้อมที่เหมาะสม
-              </p>
-
-              <div className="grid grid-cols-1 md:grid-cols-[1.5fr_1fr] gap-6">
-                {/* Camera preview */}
-                <div>
-                  <div className="relative aspect-[4/3] rounded-2xl overflow-hidden bg-slate-900">
-                    <img
-                      src="https://images.unsplash.com/photo-1633332755192-727a05c4013d?w=800&h=600&fit=crop&crop=faces"
-                      alt="ตัวอย่างกล้อง (รูปชั่วคราว)"
-                      className="w-full h-full object-cover"
-                    />
-                    {/* camera active badge */}
+                  {!cameraError && (
                     <div className="absolute top-3 left-3 flex items-center gap-1.5 bg-black/60 text-white text-xs font-medium px-3 py-1.5 rounded-full">
-                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                      กล้องกำลังทำงาน
+                      <span className={`w-2 h-2 rounded-full ${cameraReady ? "bg-emerald-400 animate-pulse" : "bg-amber-400"}`} />
+                      {cameraReady ? t("กล้องกำลังทำงาน") : t("กำลังเปิดกล้อง...")}
                     </div>
-                    {/* face frame corners */}
-                    <div className="absolute inset-10">
-                      <span className="absolute top-0 left-0 w-8 h-8 border-t-2 border-l-2 border-emerald-400 rounded-tl-md" />
-                      <span className="absolute top-0 right-0 w-8 h-8 border-t-2 border-r-2 border-emerald-400 rounded-tr-md" />
-                      <span className="absolute bottom-0 left-0 w-8 h-8 border-b-2 border-l-2 border-emerald-400 rounded-bl-md" />
-                      <span className="absolute bottom-0 right-0 w-8 h-8 border-b-2 border-r-2 border-emerald-400 rounded-br-md" />
+                  )}
+                  {currentStep === 2 && !cameraError && (
+                    <div className="absolute top-3 right-3 bg-blue-600 text-white text-xs font-semibold px-3 py-1.5 rounded-full">
+                      {POSES[shots.length]?.label}
                     </div>
-                    {/* face mesh dots (decorative) */}
-                    <svg className="absolute inset-0 w-full h-full" viewBox="0 0 400 300">
-                      {[
-                        [175, 90], [225, 90], [200, 120], [180, 150], [220, 150],
-                        [160, 70], [240, 70], [200, 70], [190, 175], [210, 175],
-                        [170, 200], [230, 200], [200, 210],
-                      ].map(([cx, cy], i) => (
-                        <circle key={i} cx={cx} cy={cy} r="2" fill="#34d399" />
-                      ))}
-                      {[
-                        [175, 90, 200, 70], [225, 90, 200, 70], [200, 120, 180, 150],
-                        [200, 120, 220, 150], [160, 70, 175, 90], [240, 70, 225, 90],
-                      ].map(([x1, y1, x2, y2], i) => (
-                        <line
-                          key={i}
-                          x1={x1} y1={y1} x2={x2} y2={y2}
-                          stroke="#34d399" strokeWidth="1" opacity="0.6"
-                        />
-                      ))}
-                    </svg>
+                  )}
+                  <div className="absolute inset-10 pointer-events-none">
+                    <span className="absolute top-0 left-0 w-8 h-8 border-t-2 border-l-2 border-emerald-400 rounded-tl-md" />
+                    <span className="absolute top-0 right-0 w-8 h-8 border-t-2 border-r-2 border-emerald-400 rounded-tr-md" />
+                    <span className="absolute bottom-0 left-0 w-8 h-8 border-b-2 border-l-2 border-emerald-400 rounded-bl-md" />
+                    <span className="absolute bottom-0 right-0 w-8 h-8 border-b-2 border-r-2 border-emerald-400 rounded-br-md" />
                   </div>
-
-                  <div className="flex items-start gap-2 mt-3 bg-blue-50 text-blue-600 text-xs rounded-xl px-4 py-3">
-                    <Info className="w-4 h-4 shrink-0 mt-0.5" />
-                    กรุณามองตรง ไม่สวมแว่นตา ไม่สวมหน้ากาก และอยู่ในที่แสงเพียงพอ
-                  </div>
+                  {flash && <div className="absolute inset-0 bg-white/70" />}
                 </div>
 
-                {/* Guidelines */}
-                <div>
-                  <h4 className="font-semibold text-slate-800 text-sm mb-3">คำแนะนำ</h4>
-                  <div className="space-y-3">
-                    {guidelines.map(({ icon: Icon, label }) => (
-                      <div key={label} className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-lg bg-blue-50 flex items-center justify-center shrink-0">
-                          <Icon className="w-4.5 h-4.5 text-blue-600" />
-                        </div>
-                        <span className="text-sm text-slate-600">{label}</span>
-                      </div>
-                    ))}
-                  </div>
+                <div className="flex items-start gap-2 mt-3 bg-blue-50 text-blue-600 text-xs rounded-xl px-4 py-3">
+                  <Info className="w-4 h-4 shrink-0 mt-0.5" />
+                  {t("กรุณามองตรง ไม่สวมแว่นตา ไม่สวมหน้ากาก และอยู่ในที่แสงเพียงพอ")}
                 </div>
               </div>
 
-              {/* Actions */}
-              <div className="flex flex-col sm:flex-row gap-3 mt-6">
-                <button className="order-2 sm:order-1 flex-1 sm:flex-initial px-6 py-3 rounded-xl border border-slate-200 text-slate-600 font-medium hover:bg-slate-50 transition-colors">
-                  ยกเลิก
-                </button>
-                <button className="order-1 sm:order-2 sm:ml-auto flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 transition-colors text-white font-semibold px-6 py-3 rounded-xl shadow-sm shadow-blue-200">
-                  <Camera className="w-4 h-4" />
-                  เริ่มบันทึกใบหน้า
-                </button>
-              </div>
-            </div>
-
-            {/* Side cards */}
-            <div className="space-y-5">
-              {/* Progress */}
-              <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
-                <h3 className="font-bold text-slate-900 mb-4">ความคืบหน้า</h3>
-                <div className="relative w-32 h-32 mx-auto">
-                  <svg viewBox="0 0 120 120" className="w-full h-full -rotate-90">
-                    <circle cx="60" cy="60" r="52" fill="none" stroke="#e2e8f0" strokeWidth="10" />
-                    <circle
-                      cx="60"
-                      cy="60"
-                      r="52"
-                      fill="none"
-                      stroke="#2563eb"
-                      strokeWidth="10"
-                      strokeLinecap="round"
-                      strokeDasharray={`${2 * Math.PI * 52}`}
-                      strokeDashoffset={`${2 * Math.PI * 52}`}
-                    />
-                  </svg>
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <span className="text-2xl font-bold text-slate-900">0%</span>
-                  </div>
-                </div>
-                <div className="text-center mt-4">
-                  <div className="text-sm font-semibold text-slate-700">ยังไม่ได้เริ่มต้น</div>
-                  <div className="text-xs text-slate-400 mt-0.5">
-                    กรุณาเริ่มบันทึกใบหน้า
-                  </div>
-                </div>
-              </div>
-
-              {/* Pose examples */}
-              <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
-                <h3 className="font-bold text-slate-900 mb-4">
-                  ตัวอย่างท่าทางที่ถูกต้อง
-                </h3>
-                <div className="grid grid-cols-2 gap-3">
-                  {posePlaceholders.map((p) => (
-                    <div key={p.label}>
-                      <div className="relative aspect-square rounded-xl overflow-hidden bg-slate-100">
-                        <img src={p.src} alt={p.label} className="w-full h-full object-cover" />
+              {/* Guidelines */}
+              <div>
+                <h4 className="font-semibold text-slate-800 text-sm mb-3">{t("คำแนะนำ")}</h4>
+                <div className="space-y-3">
+                  {guidelines.map(({ icon: Icon, label }) => (
+                    <div key={label} className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-lg bg-blue-50 flex items-center justify-center shrink-0">
+                        <Icon className="w-4 h-4 text-blue-600" />
                       </div>
-                      <div
-                        className={`flex items-center justify-center gap-1 mt-1.5 text-xs font-medium ${
-                          p.good ? "text-emerald-600" : "text-slate-500"
-                        }`}
-                      >
-                        {p.good && <Check className="w-3.5 h-3.5" />}
-                        {p.label}
-                      </div>
+                      <span className="text-sm text-slate-600">{label}</span>
                     </div>
                   ))}
                 </div>
-                <p className="text-[11px] text-slate-300 mt-3 text-center">
-                  * ตัวอย่างรูปชั่วคราว จะเปลี่ยนเป็นรูปจริงภายหลัง
-                </p>
-              </div>
-
-              {/* Data security */}
-              <div className="bg-blue-50 border border-blue-100 rounded-2xl p-5">
-                <div className="flex items-center gap-2 text-blue-700 font-semibold text-sm mb-2">
-                  <Lock className="w-4 h-4" />
-                  ความปลอดภัยของข้อมูล
-                </div>
-                <p className="text-xs text-blue-600/80 leading-relaxed">
-                  ข้อมูลใบหน้าของคุณจะถูกเข้ารหัสและจัดเก็บอย่างปลอดภัย
-                  ใช้สำหรับการเช็คชื่อเท่านั้น ไม่มีการนำไปใช้ในวัตถุประสงค์อื่น
-                </p>
               </div>
             </div>
-          </div>
-        </main>
+          )}
 
-        <footer className="text-center text-xs text-slate-400 py-6">
-          © 2026 Computer Science AI Face Attendance System. All rights reserved.
-        </footer>
+          {currentStep === 3 && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {shots.map((src, i) => (
+                <div key={i}>
+                  <img src={src} alt={POSES[i].label} className="aspect-square w-full rounded-xl object-cover" />
+                  <div className="text-xs text-center text-slate-500 mt-1.5">{POSES[i].label}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {currentStep === 4 && (
+            <div className="flex flex-col items-center text-center py-8">
+              <div className="w-16 h-16 rounded-full bg-emerald-100 flex items-center justify-center mb-3">
+                <CheckCircle2 className="w-9 h-9 text-emerald-600" />
+              </div>
+              <div className="text-lg font-bold text-slate-900">{t("ลงทะเบียนใบหน้าสำเร็จ")}</div>
+              <div className="text-sm text-slate-500 mt-1">{t("ข้อมูลใบหน้าถูกบันทึกเรียบร้อยแล้ว")}</div>
+            </div>
+          )}
+
+          {/* Actions */}
+          <div className="flex flex-col sm:flex-row gap-3 mt-6">
+            {currentStep === 1 && (
+              <>
+                <button
+                  type="button"
+                  onClick={cancel}
+                  className="order-2 sm:order-1 px-6 py-3 rounded-xl border border-slate-200 text-slate-600 font-medium hover:bg-slate-50 transition-colors"
+                >
+                  {t("ยกเลิก")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCurrentStep(2)}
+                  disabled={!cameraReady}
+                  className="order-1 sm:order-2 sm:ml-auto flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-white font-semibold px-6 py-3 rounded-xl shadow-sm shadow-blue-200"
+                >
+                  <Camera className="w-4 h-4" />
+                  {t("เริ่มบันทึกใบหน้า")}
+                </button>
+              </>
+            )}
+
+            {currentStep === 2 && (
+              <>
+                <button
+                  type="button"
+                  onClick={shots.length ? retakeLast : () => setCurrentStep(1)}
+                  className="order-2 sm:order-1 flex items-center justify-center gap-2 px-6 py-3 rounded-xl border border-slate-200 text-slate-600 font-medium hover:bg-slate-50 transition-colors"
+                >
+                  <RotateCcw className="w-4 h-4" />
+                  {shots.length ? t("ถ่ายท่าก่อนหน้าใหม่") : t("ย้อนกลับ")}
+                </button>
+                <button
+                  type="button"
+                  onClick={capture}
+                  disabled={!cameraReady}
+                  className="order-1 sm:order-2 sm:ml-auto flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-white font-semibold px-6 py-3 rounded-xl shadow-sm shadow-blue-200"
+                >
+                  <Camera className="w-4 h-4" />
+                  {t("ถ่ายภาพ ({n}/{total})", { n: shots.length + 1, total: POSES.length })}
+                </button>
+              </>
+            )}
+
+            {currentStep === 3 && (
+              <>
+                <button
+                  type="button"
+                  onClick={restart}
+                  disabled={saving}
+                  className="order-2 sm:order-1 flex items-center justify-center gap-2 px-6 py-3 rounded-xl border border-slate-200 text-slate-600 font-medium hover:bg-slate-50 disabled:opacity-50 transition-colors"
+                >
+                  <RotateCcw className="w-4 h-4" />
+                  {t("ถ่ายใหม่ทั้งหมด")}
+                </button>
+                <button
+                  type="button"
+                  onClick={submit}
+                  disabled={saving}
+                  className="order-1 sm:order-2 sm:ml-auto flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 transition-colors text-white font-semibold px-6 py-3 rounded-xl shadow-sm shadow-blue-200"
+                >
+                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                  {saving ? t("กำลังบันทึก...") : t("ยืนยันและบันทึก")}
+                </button>
+              </>
+            )}
+
+            {currentStep === 4 && (
+              <>
+                <Link
+                  to="/profile"
+                  className="order-2 sm:order-1 text-center px-6 py-3 rounded-xl border border-slate-200 text-slate-600 font-medium hover:bg-slate-50 transition-colors"
+                >
+                  {t("กลับไปหน้าโปรไฟล์")}
+                </Link>
+                <Link
+                  to="/checkin"
+                  className="order-1 sm:order-2 sm:ml-auto flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 transition-colors text-white font-semibold px-6 py-3 rounded-xl shadow-sm shadow-blue-200"
+                >
+                  <ScanFace className="w-4 h-4" />
+                  {t("ไปเช็คชื่อ")}
+                </Link>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Side cards */}
+        <div className="space-y-5">
+          {/* Progress */}
+          <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
+            <h3 className="font-bold text-slate-900 mb-4">{t("ความคืบหน้า")}</h3>
+            <div className="relative w-32 h-32 mx-auto">
+              <svg viewBox="0 0 120 120" className="w-full h-full -rotate-90">
+                <circle cx="60" cy="60" r="52" fill="none" stroke="#e2e8f0" strokeWidth="10" />
+                <circle
+                  cx="60"
+                  cy="60"
+                  r="52"
+                  fill="none"
+                  stroke={currentStep === 4 ? "#10b981" : "#2563eb"}
+                  strokeWidth="10"
+                  strokeLinecap="round"
+                  strokeDasharray={circ}
+                  strokeDashoffset={circ * (1 - progress / 100)}
+                  style={{ transition: "stroke-dashoffset 0.4s" }}
+                />
+              </svg>
+              <div className="absolute inset-0 flex items-center justify-center">
+                <span className="text-2xl font-bold text-slate-900">{progress}%</span>
+              </div>
+            </div>
+            <div className="text-center mt-4">
+              <div className="text-sm font-semibold text-slate-700">{progressText[0]}</div>
+              <div className="text-xs text-slate-400 mt-0.5">{progressText[1]}</div>
+            </div>
+          </div>
+
+          {/* Pose examples / captured shots */}
+          <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
+            <h3 className="font-bold text-slate-900 mb-4">{shots.length ? t("ท่าที่ถ่ายแล้ว") : t("ตัวอย่างท่าทางที่ถูกต้อง")}</h3>
+            <div className="grid grid-cols-2 gap-3">
+              {POSES.map((p, i) => {
+                const done = !!shots[i];
+                const isNext = currentStep === 2 && i === shots.length;
+                return (
+                  <div key={p.label}>
+                    <div
+                      className={`relative aspect-square rounded-xl overflow-hidden bg-slate-100 ${isNext ? "ring-2 ring-blue-500" : ""}`}
+                    >
+                      <img src={shots[i] || PLACEHOLDER} alt={p.label} className={`w-full h-full object-cover ${done ? "" : "opacity-60"}`} />
+                      {done && (
+                        <span className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-emerald-500 flex items-center justify-center">
+                          <Check className="w-3 h-3 text-white" />
+                        </span>
+                      )}
+                    </div>
+                    <div
+                      className={`flex items-center justify-center gap-1 mt-1.5 text-xs font-medium ${
+                        done ? "text-emerald-600" : isNext ? "text-blue-600" : "text-slate-500"
+                      }`}
+                    >
+                      {done && <Check className="w-3.5 h-3.5" />}
+                      {p.label}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            {!shots.length && <p className="text-[11px] text-slate-400 mt-3 text-center">{t("* รูปตัวอย่าง จะแทนที่ด้วยรูปที่คุณถ่าย")}</p>}
+          </div>
+
+          {/* Data security */}
+          <div className="bg-blue-50 border border-blue-100 rounded-2xl p-5">
+            <div className="flex items-center gap-2 text-blue-700 font-semibold text-sm mb-2">
+              <Lock className="w-4 h-4" />
+              {t("ความปลอดภัยของข้อมูล")}
+            </div>
+            <p className="text-xs text-blue-600/80 leading-relaxed">
+              {t("ข้อมูลใบหน้าของคุณจะถูกเข้ารหัสและจัดเก็บอย่างปลอดภัย ใช้สำหรับการเช็คชื่อเท่านั้น ไม่มีการนำไปใช้ในวัตถุประสงค์อื่น")}
+            </p>
+            {cameraError && (
+              <p className="flex items-start gap-1.5 text-xs text-amber-600 mt-3">
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                {t("ต้องอนุญาตให้เว็บไซต์ใช้กล้องก่อน จึงจะลงทะเบียนใบหน้าได้")}
+              </p>
+            )}
+          </div>
+        </div>
       </div>
-    </div>
+    </StudentLayout>
   );
 }
