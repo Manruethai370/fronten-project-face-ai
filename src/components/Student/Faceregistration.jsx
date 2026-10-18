@@ -17,7 +17,8 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import StudentLayout from "./StudentLayout";
-import { faceStore } from "./studentData";
+import { faceStore, useStudentData } from "./studentData";
+import { uploadStudentFaceImages } from "./studentApi";
 import { t } from "./i18n";
 
 const steps = [
@@ -48,6 +49,7 @@ const PLACEHOLDER = "https://images.unsplash.com/photo-1633332755192-727a05c4013
 
 export default function FaceRegistration() {
   const navigate = useNavigate();
+  const { refresh } = useStudentData();
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const [currentStep, setCurrentStep] = useState(1);
@@ -57,6 +59,7 @@ export default function FaceRegistration() {
   const [saving, setSaving] = useState(false);
   const [flash, setFlash] = useState(false);
   const [cameraKey, setCameraKey] = useState(0); // เพิ่มค่าเพื่อเปิดกล้องใหม่
+  const [submitError, setSubmitError] = useState("");
 
   const cameraOn = currentStep <= 2;
 
@@ -70,7 +73,6 @@ export default function FaceRegistration() {
   useEffect(() => {
     if (!cameraOn) return undefined;
     let cancelled = false;
-    setCameraError(null);
     (async () => {
       try {
         if (!navigator.mediaDevices?.getUserMedia) throw new Error(t("เบราว์เซอร์นี้ไม่รองรับการใช้กล้อง"));
@@ -133,19 +135,19 @@ export default function FaceRegistration() {
     navigate("/profile");
   };
 
-  // TODO: เมื่อเชื่อม backend แล้ว ให้อัปโหลด shots ไปที่ API ลงทะเบียนใบหน้า
-  const submit = () => {
+  const submit = async () => {
     setSaving(true);
-    setTimeout(() => {
-      const now = new Date();
-      const isoDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-      faceStore.set({
-        registered: true,
-        at: `${isoDate(now)}T${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`,
-      });
-      setSaving(false);
+    setSubmitError("");
+    try {
+      const result = await uploadStudentFaceImages(shots);
+      faceStore.set({ registered: result.registered, approvalStatus: result.approvalStatus, at: new Date().toISOString() });
+      await refresh();
       setCurrentStep(4);
-    }, 1000);
+    } catch (error) {
+      setSubmitError(error.message);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const progress = currentStep === 4 ? 100 : currentStep === 3 ? 90 : Math.round((shots.length / POSES.length) * 80);
@@ -156,7 +158,7 @@ export default function FaceRegistration() {
       ? [t("ถ่ายแล้ว {n}/{total} ท่า", { n: shots.length, total: POSES.length }), t("ท่าถัดไป: {pose}", { pose: POSES[shots.length]?.label })]
       : currentStep === 3
       ? [t("ถ่ายครบแล้ว"), t("กรุณาตรวจสอบรูปก่อนยืนยัน")]
-      : [t("ลงทะเบียนสำเร็จ"), t("พร้อมใช้งานเช็คชื่อแล้ว")];
+      : [t("ส่งข้อมูลแล้ว"), t("รอการตรวจสอบและอนุมัติ")];
   const circ = 2 * Math.PI * 52;
 
   return (
@@ -205,7 +207,7 @@ export default function FaceRegistration() {
             {currentStep === 1 && t("กรุณาจัดตำแหน่งใบหน้าให้อยู่ในกรอบ และอยู่ในสภาพแวดล้อมที่เหมาะสม")}
             {currentStep === 2 && t("ท่าที่ {n}/{total}: {hint} แล้วกด \"ถ่ายภาพ\"", { n: shots.length + 1, total: POSES.length, hint: POSES[shots.length]?.hint })}
             {currentStep === 3 && t("ตรวจสอบว่ารูปทุกท่าเห็นใบหน้าชัดเจน แล้วกดยืนยัน")}
-            {currentStep === 4 && t("บันทึกข้อมูลใบหน้าเรียบร้อยแล้ว คุณสามารถเช็คชื่อด้วยใบหน้าได้ทันที")}
+            {currentStep === 4 && t("ส่งรูปใบหน้าเรียบร้อยแล้ว ระบบจะเปิดใช้งานหลังได้รับการอนุมัติ")}
           </p>
 
           {cameraOn && (
@@ -220,7 +222,7 @@ export default function FaceRegistration() {
                       <div className="text-xs text-slate-400">{cameraError}</div>
                       <button
                         type="button"
-                        onClick={() => setCameraKey((k) => k + 1)}
+                        onClick={() => { setCameraError(null); setCameraKey((k) => k + 1); }}
                         className="mt-1 px-4 py-2 rounded-full bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700"
                       >
                         {t("ลองอีกครั้ง")}
@@ -283,13 +285,15 @@ export default function FaceRegistration() {
             </div>
           )}
 
+          {submitError && <p role="alert" className="mt-4 text-sm text-red-600">{submitError}</p>}
+
           {currentStep === 4 && (
             <div className="flex flex-col items-center text-center py-8">
               <div className="w-16 h-16 rounded-full bg-emerald-100 flex items-center justify-center mb-3">
                 <CheckCircle2 className="w-9 h-9 text-emerald-600" />
               </div>
-              <div className="text-lg font-bold text-slate-900">{t("ลงทะเบียนใบหน้าสำเร็จ")}</div>
-              <div className="text-sm text-slate-500 mt-1">{t("ข้อมูลใบหน้าถูกบันทึกเรียบร้อยแล้ว")}</div>
+              <div className="text-lg font-bold text-slate-900">{t("ส่งข้อมูลใบหน้าแล้ว")}</div>
+              <div className="text-sm text-slate-500 mt-1">{t("สถานะ: รอการตรวจสอบและอนุมัติ")}</div>
             </div>
           )}
 
@@ -369,13 +373,6 @@ export default function FaceRegistration() {
                 >
                   {t("กลับไปหน้าโปรไฟล์")}
                 </Link>
-                <Link
-                  to="/checkin"
-                  className="order-1 sm:order-2 sm:ml-auto flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 transition-colors text-white font-semibold px-6 py-3 rounded-xl shadow-sm shadow-blue-200"
-                >
-                  <ScanFace className="w-4 h-4" />
-                  {t("ไปเช็คชื่อ")}
-                </Link>
               </>
             )}
           </div>
@@ -453,7 +450,7 @@ export default function FaceRegistration() {
               {t("ความปลอดภัยของข้อมูล")}
             </div>
             <p className="text-xs text-blue-600/80 leading-relaxed">
-              {t("ข้อมูลใบหน้าของคุณจะถูกเข้ารหัสและจัดเก็บอย่างปลอดภัย ใช้สำหรับการเช็คชื่อเท่านั้น ไม่มีการนำไปใช้ในวัตถุประสงค์อื่น")}
+              {t("รูปใบหน้าจะถูกส่งไปจัดเก็บในระบบเพื่อรอการตรวจสอบและอนุมัติ")}
             </p>
             {cameraError && (
               <p className="flex items-start gap-1.5 text-xs text-amber-600 mt-3">

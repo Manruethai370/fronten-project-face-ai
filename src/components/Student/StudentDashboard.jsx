@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   CalendarDays,
@@ -25,55 +25,13 @@ import {
   Cell,
 } from "recharts";
 import StudentLayout from "./StudentLayout";
-import { ANNOUNCEMENTS, TODAY_CLASSES, COURSES, markRead, useProfile } from "./studentData";
+import { ANNOUNCEMENTS, TODAY_CLASSES, COURSES, markRead, useProfile, useStudentData } from "./studentData";
 import { t, LOCALE, fmtTime } from "./i18n";
 
-const recentCheckins = [
-  { subject: t("โครงสร้างข้อมูลและอัลกอริทึม"), date: t("20 พ.ค. 2567"), time: t("08:05 น."), status: "ontime" },
-  { subject: t("การเขียนโปรแกรมเชิงวัตถุ"), date: t("20 พ.ค. 2567"), time: t("10:20 น."), status: "ontime" },
-  { subject: t("ฐานข้อมูล"), date: t("19 พ.ค. 2567"), time: t("13:40 น."), status: "late", lateBy: t("สาย 10 นาที") },
-  { subject: t("ระบบปฏิบัติการ"), date: t("19 พ.ค. 2567"), time: t("09:05 น."), status: "ontime" },
-];
-
-// ข้อมูลตัวอย่างของกราฟ แยกตามช่วงเวลาที่เลือก
 const PERIODS = {
-  thisMonth: {
-    label: t("เดือนนี้"),
-    trend: [
-      { day: t("1 พ.ค."), rate: 70 },
-      { day: t("5 พ.ค."), rate: 78 },
-      { day: t("10 พ.ค."), rate: 74 },
-      { day: t("15 พ.ค."), rate: 85 },
-      { day: t("20 พ.ค."), rate: 80 },
-      { day: t("25 พ.ค."), rate: 88 },
-      { day: t("30 พ.ค."), rate: 92.5 },
-    ],
-    summary: [20, 3, 1],
-  },
-  lastMonth: {
-    label: t("เดือนที่แล้ว"),
-    trend: [
-      { day: t("1 เม.ย."), rate: 82 },
-      { day: t("5 เม.ย."), rate: 86 },
-      { day: t("10 เม.ย."), rate: 90 },
-      { day: t("15 เม.ย."), rate: 84 },
-      { day: t("20 เม.ย."), rate: 88 },
-      { day: t("25 เม.ย."), rate: 91 },
-      { day: t("30 เม.ย."), rate: 89 },
-    ],
-    summary: [22, 2, 2],
-  },
-  term: {
-    label: t("ทั้งภาคเรียน"),
-    trend: [
-      { day: t("ม.ค."), rate: 88 },
-      { day: t("ก.พ."), rate: 90 },
-      { day: t("มี.ค."), rate: 86 },
-      { day: t("เม.ย."), rate: 89 },
-      { day: t("พ.ค."), rate: 92.5 },
-    ],
-    summary: [101, 9, 4],
-  },
+  thisMonth: { label: t("เดือนนี้") },
+  lastMonth: { label: t("เดือนที่แล้ว") },
+  term: { label: t("ทั้งภาคเรียน") },
 };
 const SUMMARY_META = [
   { name: t("ตรงเวลา"), color: "#22c55e" },
@@ -90,6 +48,7 @@ function greeting(hour) {
 export default function StudentDashboard() {
   const navigate = useNavigate();
   const profile = useProfile();
+  const { checkins } = useStudentData();
   const [now, setNow] = useState(new Date());
   const [period, setPeriod] = useState("thisMonth");
 
@@ -105,12 +64,43 @@ export default function StudentDashboard() {
     return { ...c, subject: course?.name || c.code, teacher: course?.teacher || "-" };
   });
   const checkedToday = todayClasses.filter((c) => c.status === "checked").length;
+  const thisMonthCheckins = checkins.filter((item) => item.iso.slice(0, 7) === new Date().toISOString().slice(0, 7));
+  const presentCount = thisMonthCheckins.filter((item) => item.status !== "absent").length;
+  const monthlyRate = thisMonthCheckins.length ? (presentCount / thisMonthCheckins.length) * 100 : 0;
 
-  const attendanceTrend = PERIODS[period].trend;
-  const attendanceSummary = SUMMARY_META.map((m, i) => ({ ...m, value: PERIODS[period].summary[i] }));
+  const selectedCheckins = period === "thisMonth"
+    ? checkins.filter((item) => item.iso.slice(0, 7) === new Date().toISOString().slice(0, 7))
+    : period === "lastMonth"
+      ? checkins.filter((item) => {
+          const lastMonth = new Date();
+          lastMonth.setMonth(lastMonth.getMonth() - 1);
+          return item.iso.slice(0, 7) === lastMonth.toISOString().slice(0, 7);
+        })
+      : checkins;
+  const attendanceSummary = SUMMARY_META.map((meta, index) => ({
+    ...meta,
+    value: selectedCheckins.filter((item) => item.status === ["ontime", "late", "absent"][index]).length,
+  }));
+  const groupedCheckins = selectedCheckins.reduce((groups, item) => {
+    const key = item.iso.slice(0, 10);
+    groups[key] ||= { day: key.slice(8), present: 0, total: 0 };
+    groups[key].total += 1;
+    if (item.status !== "absent") groups[key].present += 1;
+    return groups;
+  }, {});
+  const attendanceTrend = Object.values(groupedCheckins).map((item) => ({
+    day: item.day,
+    rate: Math.round((item.present / item.total) * 100),
+  }));
   const summaryTotal = attendanceSummary.reduce((a, b) => a + b.value, 0);
 
   const announcements = ANNOUNCEMENTS.slice(0, 2);
+  const recentCheckins = checkins.slice(0, 4).map((item) => ({
+    ...item,
+    subject: COURSES.find((course) => course.code === item.code)?.name || item.code,
+    date: new Date(`${item.iso}T00:00:00`).toLocaleDateString(LOCALE, { day: "numeric", month: "short", year: "numeric" }),
+    statusLabel: item.status === "ontime" ? t("ตรงเวลา") : item.status === "late" ? t("สาย") : t("ขาดเรียน"),
+  }));
   const openAnnouncement = (a) => {
     markRead(a.id);
     navigate(`/announcements?open=${a.id}`);
@@ -151,8 +141,8 @@ export default function StudentDashboard() {
           label={t("เช็คชื่อวันนี้")}
           value={checkedToday}
           unit={t("/{n} วิชา", { n: todayClasses.length })}
-          sub={t("{pct}% ของวันนี้", { pct: ((checkedToday / todayClasses.length) * 100).toFixed(1) })}
-          progress={(checkedToday / todayClasses.length) * 100}
+          sub={t("{pct}% ของวันนี้", { pct: (todayClasses.length ? (checkedToday / todayClasses.length) * 100 : 0).toFixed(1) })}
+          progress={todayClasses.length ? (checkedToday / todayClasses.length) * 100 : 0}
           barColor="bg-emerald-500"
         />
         <StatCard
@@ -160,31 +150,31 @@ export default function StudentDashboard() {
           icon={<CalendarCheck className="w-6 h-6 text-blue-600" />}
           iconBg="bg-blue-100"
           label={t("เช็คชื่อทั้งหมด")}
-          value="24"
+          value={thisMonthCheckins.filter((item) => item.status !== "absent").length}
           unit={t("ครั้ง")}
           sub={t("เดือนนี้")}
-          sparkline={PERIODS.thisMonth.trend}
+          sparkline={attendanceTrend}
         />
         <StatCard
           to="/history"
           icon={<Percent className="w-6 h-6 text-purple-600" />}
           iconBg="bg-purple-100"
           label={t("อัตราการเข้าเรียน")}
-          value="92.5"
+          value={monthlyRate.toFixed(1)}
           unit="%"
           sub={t("เดือนนี้")}
-          progress={92.5}
+          progress={monthlyRate}
           barColor="bg-purple-500"
         />
         <StatCard
           to="/courses"
           icon={<Trophy className="w-6 h-6 text-amber-500" />}
           iconBg="bg-amber-100"
-          label={t("อันดับในชั้นเรียน")}
-          value="5"
-          unit="/45"
-          sub={t("จากทั้งหมด")}
-          progress={(1 - 5 / 45) * 100}
+          label={t("รายวิชาที่ลงทะเบียน")}
+          value={COURSES.length}
+          unit={t("วิชา")}
+          sub={t("ภาคเรียนปัจจุบัน")}
+          progress={Math.min(COURSES.length * 10, 100)}
           barColor="bg-amber-500"
         />
       </div>
@@ -253,8 +243,8 @@ export default function StudentDashboard() {
           </div>
 
           <div className="space-y-4">
-            {recentCheckins.map((r, i) => (
-              <Link to="/history" key={i} className="flex items-center gap-3 rounded-xl -mx-2 px-2 py-1 hover:bg-slate-50">
+            {recentCheckins.map((r) => (
+              <Link to="/history" key={r.id} className="flex items-center gap-3 rounded-xl -mx-2 px-2 py-1 hover:bg-slate-50">
                 <img src={profile.avatar} alt="" className="w-9 h-9 rounded-full object-cover shrink-0" />
                 <div className="min-w-0 flex-1">
                   <div className="text-sm font-medium text-slate-800 truncate">{r.subject}</div>
@@ -264,13 +254,14 @@ export default function StudentDashboard() {
                 </div>
                 <span
                   className={`text-[11px] font-semibold px-2.5 py-1 rounded-lg shrink-0 ${
-                    r.status === "ontime" ? "bg-emerald-100 text-emerald-600" : "bg-amber-100 text-amber-600"
+                    r.status === "ontime" ? "bg-emerald-100 text-emerald-600" : r.status === "late" ? "bg-amber-100 text-amber-600" : "bg-red-100 text-red-600"
                   }`}
                 >
-                  {r.status === "ontime" ? t("ตรงเวลา") : r.lateBy}
+                  {r.statusLabel}
                 </span>
               </Link>
             ))}
+            {!recentCheckins.length && <p className="text-sm text-slate-400">{t("ไม่มีรายการ")}</p>}
           </div>
         </div>
       </div>
@@ -347,7 +338,7 @@ export default function StudentDashboard() {
                   <span className="text-slate-600">{s.name}</span>
                 </div>
                 <span className="text-slate-800 font-medium">
-                  {s.value} ({((s.value / summaryTotal) * 100).toFixed(1)}%)
+                  {s.value} ({summaryTotal ? ((s.value / summaryTotal) * 100).toFixed(1) : "0.0"}%)
                 </span>
               </div>
             ))}

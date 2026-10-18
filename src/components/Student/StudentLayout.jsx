@@ -1,12 +1,8 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
-  Home,
   ScanFace,
-  History,
-  UserPlus,
   BookOpen,
-  CalendarDays,
   Megaphone,
   User,
   Settings,
@@ -24,6 +20,7 @@ import logoImg from "../../assets/logo-cs.png";
 import {
   ANNOUNCEMENTS,
   COURSES,
+  SCHEDULE,
   TODAY_CLASSES,
   clearLoginSession,
   courseName,
@@ -31,20 +28,12 @@ import {
   usePrefs,
   useProfile,
   useReadIds,
+  useStudentData,
+  resetStudentData,
 } from "./studentData";
 import { t, fmtDate, fmtTime } from "./i18n";
-
-export const studentNavItems = [
-  { icon: Home, label: t("หน้าหลัก"), to: "/dashboard", keywords: t("dashboard แดชบอร์ด สรุป หน้าแรก") },
-  { icon: ScanFace, label: t("เช็คชื่อ"), to: "/checkin", keywords: t("checkin สแกน ใบหน้า กล้อง") },
-  { icon: History, label: t("ประวัติการเช็คชื่อ"), to: "/history", keywords: t("history ย้อนหลัง สาย ขาด ส่งออก") },
-  { icon: UserPlus, label: t("ลงทะเบียนใบหน้า"), to: "/face-registration", keywords: t("face register รูป ถ่ายรูป") },
-  { icon: BookOpen, label: t("วิชาเรียนของฉัน"), to: "/courses", keywords: t("courses รายวิชา") },
-  { icon: CalendarDays, label: t("ตารางเรียน"), to: "/schedule", keywords: t("schedule ตาราง คาบ สัปดาห์") },
-  { icon: Megaphone, label: t("ประกาศ"), to: "/announcements", keywords: t("announcement ข่าว แจ้ง") },
-  { icon: User, label: t("โปรไฟล์"), to: "/profile", keywords: t("profile ข้อมูลส่วนตัว เบอร์โทร") },
-  { icon: Settings, label: t("ตั้งค่า"), to: "/settings", keywords: t("settings รหัสผ่าน password ธีม ตัวอักษร ภาษา") },
-];
+import { clearStudentToken, getStudentToken } from "./studentApi";
+import { studentNavItems } from "./studentNav";
 
 const FONT_SIZE_PX = { small: "14px", normal: "16px", large: "18px" };
 
@@ -123,11 +112,55 @@ export default function StudentLayout({ children }) {
   const location = useLocation();
   const navigate = useNavigate();
   const profile = useProfile();
+  const studentData = useStudentData();
+  const { notif } = usePrefs();
   const dark = useAppearance();
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 1024);
+  const notifiedScheduleItems = useRef(new Set());
+
+  useEffect(() => {
+    if (!getStudentToken()) navigate("/login", { replace: true });
+    const expireSession = () => {
+      resetStudentData();
+      navigate("/login", { replace: true });
+    };
+    window.addEventListener("student-session-expired", expireSession);
+    return () => window.removeEventListener("student-session-expired", expireSession);
+  }, [navigate]);
+
+  const [saveError, setSaveError] = useState("");
+  useEffect(() => {
+    const onSaveError = (event) => setSaveError(event.detail || t("บันทึกข้อมูลไม่สำเร็จ"));
+    window.addEventListener("student-save-error", onSaveError);
+    return () => window.removeEventListener("student-save-error", onSaveError);
+  }, []);
+
+  useEffect(() => {
+    if (!notif.schedule || !("Notification" in window) || Notification.permission !== "granted") return undefined;
+    const checkUpcomingClasses = () => {
+      const now = new Date();
+      const day = (now.getDay() + 6) % 7;
+      const currentMinute = now.getHours() * 60 + now.getMinutes();
+      for (const item of SCHEDULE) {
+        if (Number(item.day) !== day || !item.startTime) continue;
+        const [hour, minute] = item.startTime.split(":").map(Number);
+        const startMinute = hour * 60 + minute;
+        const key = `${new Date().toISOString().slice(0, 10)}:${item.code}:${item.startTime}`;
+        if (startMinute - currentMinute <= 10 && startMinute - currentMinute > 0 && !notifiedScheduleItems.current.has(key)) {
+          new Notification(t("ใกล้ถึงเวลาเรียน"), { body: `${item.code} ${item.name} • ${item.startTime}` });
+          notifiedScheduleItems.current.add(key);
+        }
+      }
+    };
+    checkUpcomingClasses();
+    const timer = setInterval(checkUpcomingClasses, 30_000);
+    return () => clearInterval(timer);
+  }, [notif.schedule, studentData.schedule]);
 
   const logout = () => {
     clearLoginSession();
+    clearStudentToken();
+    resetStudentData();
     navigate("/login", { replace: true });
   };
 
@@ -226,7 +259,17 @@ export default function StudentLayout({ children }) {
           <UserMenu profile={profile} onLogout={logout} />
         </header>
 
-        <main className="flex-1 overflow-y-auto p-6 space-y-6">{children}</main>
+        <main className="flex-1 overflow-y-auto p-6 space-y-6">
+          {studentData.status === "loading" && <p role="status" className="text-sm text-slate-500">{t("กำลังโหลดข้อมูล...")}</p>}
+          {studentData.status === "error" && (
+            <div role="alert" className="flex items-center justify-between gap-3 text-sm text-red-600">
+              <span>{studentData.error}</span>
+              <button type="button" onClick={studentData.refresh} className="font-semibold underline">{t("ลองอีกครั้ง")}</button>
+            </div>
+          )}
+          {saveError && <p role="alert" className="text-sm text-red-600">{saveError}</p>}
+          {studentData.status === "ready" && children}
+        </main>
 
         <footer className="text-center text-xs text-slate-400 py-6">
           © 2026 Computer Science AI Face Attendance System. All rights reserved.

@@ -15,51 +15,11 @@ import {
 } from "lucide-react";
 import StudentLayout from "./StudentLayout";
 import ThaiDatePicker from "./ThaiDatePicker";
-import { COURSES, courseName, downloadCsv } from "./studentData";
+import { COURSES, courseName, downloadCsv, useStudentData } from "./studentData";
 import { t, LOCALE } from "./i18n";
 
 const PAGE_SIZE = 8;
-const TODAY = "2024-05-20"; // วันที่ "วันนี้" ของข้อมูลตัวอย่าง
-
-// ข้อมูลตัวอย่าง (วันที่เก็บเป็น ค.ศ. เพื่อใช้กรองช่วงวันได้)
-const RECORDS = [
-  ["2024-05-20", "08:45:30", "CS-201", "ontime"],
-  ["2024-05-20", "10:20:15", "CS-202", "late"],
-  ["2024-05-19", "13:30:00", "CS-203", "ontime"],
-  ["2024-05-17", "08:30:25", "CS-201", "ontime"],
-  ["2024-05-17", "10:25:40", "CS-202", "ontime"],
-  ["2024-05-16", "13:28:10", "CS-203", "ontime"],
-  ["2024-05-15", "08:40:05", "CS-201", "late"],
-  ["2024-05-15", "10:30:12", "CS-202", "ontime"],
-  ["2024-05-14", "-", "CS-204", "absent"],
-  ["2024-05-13", "13:31:02", "CS-203", "ontime"],
-  ["2024-05-13", "08:28:44", "CS-201", "ontime"],
-  ["2024-05-10", "10:22:19", "CS-202", "ontime"],
-  ["2024-05-10", "13:29:55", "CS-203", "late"],
-  ["2024-05-09", "08:31:08", "CS-201", "ontime"],
-  ["2024-05-09", "10:19:37", "CS-202", "ontime"],
-  ["2024-05-08", "13:30:41", "CS-203", "ontime"],
-  ["2024-05-06", "08:27:52", "CS-201", "ontime"],
-  ["2024-05-06", "10:24:03", "CS-202", "ontime"],
-  ["2024-05-03", "13:32:29", "CS-203", "ontime"],
-  ["2024-05-02", "08:29:15", "CS-201", "ontime"],
-  ["2024-05-02", "10:21:58", "CS-202", "ontime"],
-  ["2024-05-01", "13:27:33", "CS-203", "ontime"],
-  ["2024-05-01", "08:33:47", "CS-201", "ontime"],
-  ["2024-05-01", "-", "CS-204", "absent"],
-].map(([iso, time, code, status], i) => ({
-  id: i + 1,
-  iso,
-  time,
-  code,
-  room: COURSES.find((c) => c.code === code)?.room.replace(t("ห้อง "), "") || code,
-  status,
-  method: status === "absent" ? "-" : i % 7 === 3 ? t("อาจารย์เช็คให้") : t("สแกนใบหน้า"),
-  confidence: status === "absent" ? null : 92 + ((i * 7) % 7),
-}));
-
-// วันล่าสุดที่มีข้อมูล — ปฏิทินจะเปิดที่เดือนนี้ถ้ายังไม่ได้เลือกวัน
-const LATEST_DATE = RECORDS.reduce((m, r) => (r.iso > m ? r.iso : m), "");
+const TODAY = new Date().toISOString().slice(0, 10);
 
 const thaiDate = (iso, month = "short") =>
   new Date(`${iso}T00:00:00`).toLocaleDateString(LOCALE, { day: "2-digit", month, year: "numeric" });
@@ -71,6 +31,7 @@ const statusMeta = {
 };
 
 export default function CheckinHistory() {
+  const { checkins } = useStudentData();
   const [params] = useSearchParams();
   const [course, setCourse] = useState(params.get("course") || "");
   const [status, setStatus] = useState("");
@@ -79,8 +40,9 @@ export default function CheckinHistory() {
   const [page, setPage] = useState(1);
   const [openId, setOpenId] = useState(null);
 
-  const courseCodes = [...new Set(RECORDS.map((r) => r.code))];
-  const records = RECORDS.filter(
+  const courseCodes = [...new Set(checkins.map((r) => r.code))];
+  const latestDate = checkins[0]?.iso || TODAY;
+  const records = checkins.filter(
     (r) =>
       (!course || r.code === course) &&
       (!status || r.status === status) &&
@@ -94,7 +56,7 @@ export default function CheckinHistory() {
 
   const count = (s) => records.filter((r) => r.status === s).length;
   const pct = (n) => (records.length ? `${((n / records.length) * 100).toFixed(2)}%` : "0%");
-  const todayCount = RECORDS.filter((r) => r.iso === TODAY && r.status !== "absent").length;
+  const todayCount = checkins.filter((r) => r.iso === TODAY && r.status !== "absent").length;
 
   const withReset = (fn) => (e) => {
     fn(e.target.value);
@@ -211,7 +173,7 @@ export default function CheckinHistory() {
               onChange={(v) => withReset(setDateFrom)({ target: { value: v } })}
               placeholder={t("ตั้งแต่วันที่")}
               ariaLabel={t("ตั้งแต่วันที่")}
-              defaultMonth={dateTo || LATEST_DATE}
+              defaultMonth={dateTo || latestDate}
             />
             <span className="text-slate-400">-</span>
             <ThaiDatePicker
@@ -220,7 +182,7 @@ export default function CheckinHistory() {
               onChange={(v) => withReset(setDateTo)({ target: { value: v } })}
               placeholder={t("ถึงวันที่")}
               ariaLabel={t("ถึงวันที่")}
-              defaultMonth={dateFrom || LATEST_DATE}
+              defaultMonth={dateFrom || latestDate}
             />
           </div>
 

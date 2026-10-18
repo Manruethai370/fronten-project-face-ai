@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   BookOpen,
@@ -19,7 +19,7 @@ import {
   GraduationCap,
 } from "lucide-react";
 import StudentLayout from "./StudentLayout";
-import { COURSES } from "./studentData";
+import { COURSES, useStudentData } from "./studentData";
 import { t } from "./i18n";
 
 const colorMap = {
@@ -33,8 +33,6 @@ const colorMap = {
 const COLORS = ["blue", "amber", "emerald", "purple", "sky", "rose"];
 const ICONS = { "CS-201": Code2, "CS-203": Database, "CS-204": Cpu, "CS-205": Brain, "GE-101": BarChart3, "CS-101": Code2, "MA-102": GraduationCap };
 
-const TERMS = [...new Set(COURSES.map((c) => c.term))];
-
 // ?open=<รหัสวิชา> (จากช่องค้นหา/หน้าอื่น) = เปิดรายละเอียดวิชานั้นทันที
 export default function MyCourses() {
   const [params] = useSearchParams();
@@ -43,14 +41,17 @@ export default function MyCourses() {
 }
 
 function MyCoursesPage({ focusCode }) {
+  useStudentData();
+  const terms = [...new Set(COURSES.map((course) => course.term).filter(Boolean))];
   const focusTerm = COURSES.find((c) => c.code === focusCode)?.term;
-  const [term, setTerm] = useState(focusTerm || TERMS[0]);
+  const [term, setTerm] = useState(focusTerm || "");
   const [status, setStatus] = useState("");
   const [openCode, setOpenCode] = useState(focusCode);
   const [menuCode, setMenuCode] = useState(null);
 
+  const activeTerm = focusTerm || (terms.includes(term) ? term : terms[0] || "");
   const courses = COURSES.map((c, i) => ({ ...c, color: COLORS[i % COLORS.length], icon: ICONS[c.code] })).filter(
-    (c) => c.term === term && (!status || c.status === status)
+    (c) => c.term === activeTerm && (!status || c.status === status)
   );
   const totalAttended = courses.reduce((s, c) => s + c.attended, 0);
   const totalSessions = courses.reduce((s, c) => s + c.total, 0);
@@ -76,12 +77,12 @@ function MyCoursesPage({ focusCode }) {
 
         <div className="flex items-center gap-3">
           <select
-            value={term}
+            value={activeTerm}
             onChange={(e) => setTerm(e.target.value)}
             aria-label={t("ภาคเรียน")}
             className="border border-slate-200 rounded-xl px-4 py-2.5 text-sm text-slate-600 font-medium focus:outline-none focus:ring-2 focus:ring-blue-200 bg-white"
           >
-            {TERMS.map((tm) => (
+            {terms.map((tm) => (
               <option key={tm} value={tm}>
                 {t("ภาคเรียน {term}", { term: tm })}
               </option>

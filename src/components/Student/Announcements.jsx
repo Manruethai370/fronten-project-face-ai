@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   CalendarDays,
@@ -17,7 +17,7 @@ import {
   CheckCheck,
 } from "lucide-react";
 import StudentLayout from "./StudentLayout";
-import { ANNOUNCEMENTS, CATEGORY_LABEL, COURSES, markRead, useReadIds } from "./studentData";
+import { ANNOUNCEMENTS, CATEGORY_LABEL, COURSES, markRead, useReadIds, useStudentData } from "./studentData";
 import { t, fmtDate, fmtTime } from "./i18n";
 
 const PAGE_SIZE = 5;
@@ -47,6 +47,7 @@ export default function Announcements() {
 }
 
 function AnnouncementsPage({ focusId }) {
+  useStudentData();
   const readIds = useReadIds();
   const [search, setSearch] = useState("");
   const [readFilter, setReadFilter] = useState("");

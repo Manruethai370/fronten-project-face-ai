@@ -1,8 +1,9 @@
-import React, { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { CalendarDays, CalendarRange, List, Info, CheckCircle2, MapPin, ScanFace } from "lucide-react";
 import StudentLayout from "./StudentLayout";
 import { t, fmtTime } from "./i18n";
+import { refreshStudentSchedule, useStudentData } from "./studentData";
 
 
 const days = [t("จันทร์"), t("อังคาร"), t("พุธ"), t("พฤหัสบดี"), t("ศุกร์"), t("เสาร์"), t("อาทิตย์")];
@@ -26,42 +27,6 @@ const colorMap = {
   rose: { dot: "bg-rose-500", bg: "bg-rose-50", border: "border-rose-400", text: "text-rose-700" },
 };
 
-// day: index into `days` (0 = Monday), startRow/span: index into `timeSlots`
-const CLASSES_BY_TERM = {
-  "1/2568": [
-  { code: "CS-201", name: t("โครงสร้างข้อมูล"), room: "CS-201", day: 0, startRow: 0, span: 2, color: "blue" },
-  { code: "CS-203", name: t("ฐานข้อมูล"), room: "CS-203", day: 3, startRow: 0, span: 2, color: "emerald" },
-  { code: "CS-202", name: t("การเขียนโปรแกรมเชิงวัตถุ"), room: "CS-202", day: 1, startRow: 2, span: 2, color: "purple" },
-  { code: "CS-204", name: t("ระบบปฏิบัติการ"), room: "CS-204", day: 4, startRow: 2, span: 2, color: "amber" },
-  { code: "CS-205", name: t("ปัญญาประดิษฐ์เบื้องต้น"), room: "Lab 1", day: 0, startRow: 5, span: 2, color: "rose" },
-  ],
-  "2/2567": [
-    { code: "CS-101", name: t("การเขียนโปรแกรมคอมพิวเตอร์"), room: "Lab 2", day: 0, startRow: 5, span: 3, color: "blue" },
-    { code: "MA-102", name: t("แคลคูลัส 2"), room: "SC-301", day: 1, startRow: 5, span: 2, color: "amber" },
-  ],
-};
-const STATS_BY_TERM = {
-  "1/2568": { rate: 0.94, present: 33, absent: 2, late: 1 },
-  "2/2567": { rate: 0.97, present: 56, absent: 1, late: 2 },
-};
-
-const todaySchedule = [
-  {
-    time: "08:00 - 10:00",
-    code: "CS-201",
-    name: t("โครงสร้างข้อมูลและอัลกอริทึม"),
-    room: "CS-201",
-    color: "blue",
-  },
-  {
-    time: "10:00 - 12:00",
-    code: "CS-202",
-    name: t("การเขียนโปรแกรมเชิงวัตถุ"),
-    room: "CS-202",
-    color: "purple",
-  },
-];
-
 // build a lookup so we know which cells to render, skip, or leave empty
 function buildGrid(classes) {
   const occupied = {}; // `${day}-${row}` -> true if part of a span (not the start)
@@ -80,11 +45,26 @@ function buildGrid(classes) {
 const timeOf = (c) => `${timeSlots[c.startRow].split(" - ")[0]} - ${timeSlots[c.startRow + c.span - 1].split(" - ")[1]}`;
 
 export default function Schedule() {
+  const { schedule, checkins } = useStudentData();
   const [view, setView] = useState("week");
-  const [term, setTerm] = useState("1/2568");
+  const terms = [...new Set(schedule.map((item) => item.term).filter(Boolean))];
+  const [term, setTerm] = useState("");
   const [selected, setSelected] = useState(null);
-  const classes = CLASSES_BY_TERM[term];
-  const stats = STATS_BY_TERM[term];
+  useEffect(() => { refreshStudentSchedule().catch(() => {}); }, []);
+  const activeTerm = terms.includes(term) ? term : terms[0] || "";
+  const classes = schedule.filter((item) => !activeTerm || item.term === activeTerm).map((item, index) => {
+    const [startHour, startMinute] = (item.startTime || "").split(":").map(Number);
+    const [endHour, endMinute] = (item.endTime || "").split(":").map(Number);
+    const startRow = Math.max(0, Math.min(timeSlots.length - 1, Math.floor((startHour * 60 + startMinute - 8 * 60) / 60)));
+    const endRow = Math.max(startRow + 1, Math.min(timeSlots.length, Math.ceil((endHour * 60 + endMinute - 8 * 60) / 60)));
+    return { ...item, day: Number(item.day), startRow, span: endRow - startRow, color: ["blue", "purple", "emerald", "amber", "rose"][index % 5] };
+  }).filter((item) => item.day >= 0 && item.day <= 6 && item.startTime && item.endTime);
+  const courseCodes = new Set(classes.map((item) => item.code));
+  const termCheckins = checkins.filter((item) => courseCodes.has(item.code));
+  const presentCount = termCheckins.filter((item) => item.status === "ontime").length;
+  const lateCount = termCheckins.filter((item) => item.status === "late").length;
+  const absentCount = termCheckins.filter((item) => item.status === "absent").length;
+  const stats = { rate: termCheckins.length ? (presentCount + lateCount) / termCheckins.length : 0, present: presentCount, late: lateCount, absent: absentCount };
   const { occupied, startAt } = buildGrid(classes);
   const selectedClass = classes.find((c) => `${c.code}-${c.day}` === selected);
 
@@ -105,7 +85,7 @@ export default function Schedule() {
         </div>
 
         <select
-          value={term}
+          value={activeTerm}
           onChange={(e) => {
             setTerm(e.target.value);
             setSelected(null);
@@ -113,7 +93,7 @@ export default function Schedule() {
           aria-label={t("ภาคเรียน")}
           className="border border-slate-200 rounded-xl px-4 py-2.5 text-sm text-slate-600 font-medium focus:outline-none focus:ring-2 focus:ring-blue-200 bg-white self-start lg:self-auto"
         >
-          {Object.keys(CLASSES_BY_TERM).map((tm) => (
+          {terms.map((tm) => (
             <option key={tm} value={tm}>
               {t("ภาคเรียน {term}", { term: tm })}
             </option>
@@ -150,7 +130,9 @@ export default function Schedule() {
       <div className="grid grid-cols-1 xl:grid-cols-[2.2fr_1fr] gap-5 items-start">
         {/* Timetable */}
         <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5 overflow-x-auto">
-          {view === "week" ? (
+          {!classes.length ? (
+            <div className="py-12 text-center text-sm text-slate-400">{t("ยังไม่มีตารางเรียนในฐานข้อมูล")}</div>
+          ) : view === "week" ? (
             <>
               <table className="w-full text-sm border-collapse min-w-[760px]">
                 <thead>
@@ -352,13 +334,13 @@ export default function Schedule() {
               <h3 className="font-bold text-slate-900">{t("ตารางเรียนวันนี้")}</h3>
             </div>
             <div className="space-y-3">
-              {todaySchedule.map((item, i) => {
+              {classes.filter((item) => item.day === ((new Date().getDay() + 6) % 7)).map((item) => {
                 const cs = colorMap[item.color];
                 return (
-                  <Link to={`/courses?open=${item.code}`} key={i} className={`block rounded-xl ${cs.bg} px-4 py-3 hover:brightness-95 transition`}>
+                  <Link to={`/courses?open=${item.code}`} key={`${item.code}-${item.day}`} className={`block rounded-xl ${cs.bg} px-4 py-3 hover:brightness-95 transition`}>
                     <div className="flex items-center gap-1.5 text-xs text-slate-500 mb-1">
                       <span className={`w-1.5 h-1.5 rounded-full ${cs.dot}`} />
-                      {item.time}
+                      {timeOf(item)}
                     </div>
                     <div className="flex items-center justify-between gap-2">
                       <span className={`text-sm font-bold ${cs.text}`}>{item.code}</span>
@@ -371,6 +353,7 @@ export default function Schedule() {
                   </Link>
                 );
               })}
+              {!classes.some((item) => item.day === ((new Date().getDay() + 6) % 7)) && <p className="text-sm text-slate-400">{t("วันนี้ไม่มีคาบเรียนในตาราง")}</p>}
             </div>
           </div>
 

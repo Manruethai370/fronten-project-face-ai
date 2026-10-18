@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import logoImg from "../assets/logo-cs.png";
 import bgHero from "../assets/bg-hero.jpg";
 import {
@@ -289,7 +289,7 @@ export default function FaceAttendLanding() {
 
                     {/* screen title */}
                     <div className="text-center text-[13px] font-medium text-slate-700 pt-2 pb-3">
-                      สแกนใบหน้าเพื่อเช็คชื่อ
+                      ตัวอย่างระบบเช็คชื่อ
                     </div>
 
                     {/* face photo with scan ring + sweep */}
@@ -335,7 +335,7 @@ export default function FaceAttendLanding() {
                       </div>
                       <div className="text-white">
                         <div className="text-sm font-semibold leading-tight">
-                          เช็คชื่อสำเร็จ
+                          ตรวจสอบข้อมูลรายวิชา
                         </div>
                         <div className="text-lg font-bold leading-tight">
                           08:55:23
@@ -382,9 +382,9 @@ export default function FaceAttendLanding() {
             </p>
             <ul className="space-y-3">
               {[
-                "ยืนยันตัวตนด้วย AI จดจำใบหน้า ป้องกันการเช็คชื่อแทนกัน",
-                "เชื่อมข้อมูลการเข้าเรียนเข้ากับรายงานและคะแนนเก็บอัตโนมัติ",
-                "ข้อมูลใบหน้าและประวัติการเช็คชื่อถูกเข้ารหัสตลอดการใช้งาน",
+                "ดูรายวิชา โปรไฟล์ และประวัติการเข้าเรียนจากฐานข้อมูล",
+                "เช็คชื่อแบบสำรองได้เฉพาะคาบที่ผู้สอนเปิดและอนุญาต",
+                "ส่งรูปใบหน้าเพื่อรอการตรวจสอบและอนุมัติก่อนใช้งาน",
               ].map((item) => (
                 <li
                   key={item}
@@ -407,20 +407,14 @@ export default function FaceAttendLanding() {
               bg="bg-blue-50"
             />
             <StatBlock
-              value="140+"
-              label="นักศึกษาที่ใช้งาน"
+              value="DB"
+              label="ข้อมูล Student เชื่อมฐานข้อมูล"
               color="text-emerald-600"
               bg="bg-emerald-50"
             />
             <StatBlock
-              value="99%"
-              label="ความแม่นยำในการจดจำ"
-              color="text-purple-600"
-              bg="bg-purple-50"
-            />
-            <StatBlock
-              value="<3 วิ"
-              label="เวลาเช็คชื่อเฉลี่ย"
+              value="Manual"
+              label="เช็คชื่อสำรองตามเวลาที่กำหนด"
               color="text-amber-600"
               bg="bg-amber-50"
             />
@@ -449,8 +443,7 @@ export default function FaceAttendLanding() {
               ครบทุกฟังก์ชันที่ห้องเรียนต้องการ
             </h2>
             <p className="text-slate-500 leading-relaxed">
-              ตั้งแต่การเช็คชื่อด้วยใบหน้าไปจนถึงการคำนวณคะแนนและออกรายงาน
-              ระบบเดียวจบ
+              จัดการข้อมูล Student และเช็คชื่อแบบสำรองตาม session ที่ผู้สอนเปิด
             </p>
           </Reveal>
 
@@ -458,8 +451,8 @@ export default function FaceAttendLanding() {
             {[
               {
                 icon: ScanFace,
-                title: "ยืนยันตัวตนด้วยใบหน้า",
-                desc: "ใช้เทคโนโลยี AI ในการจดจำใบหน้าเพื่อความปลอดภัยและแม่นยำ",
+                title: "ลงทะเบียนรูปใบหน้า",
+                desc: "ส่งรูปเพื่อรอการตรวจสอบและอนุมัติก่อนใช้งาน",
               },
               {
                 icon: Clock,
@@ -468,8 +461,8 @@ export default function FaceAttendLanding() {
               },
               {
                 icon: ShieldCheck,
-                title: "ปลอดภัย เชื่อถือได้",
-                desc: "ข้อมูลถูกเข้ารหัสปลอดภัยตามมาตรฐาน",
+                title: "ข้อมูล Student",
+                desc: "โปรไฟล์ รายวิชา และประวัติอ่านจากฐานข้อมูล",
               },
               {
                 icon: BarChart3,
@@ -549,16 +542,16 @@ export default function FaceAttendLanding() {
               <Step
                 number="3"
                 icon={<ScanFace className="w-6 h-6 text-blue-600" />}
-                title="สแกนใบหน้า"
-                desc="ยืนยันตัวตนด้วยการสแกนใบหน้าผ่านกล้องมือถือ"
+                title="เช็คชื่อสำรอง"
+                desc="เลือกคาบที่เปิดและยืนยันแบบ manual เมื่อรายวิชาอนุญาต"
               />
             </Reveal>
             <Reveal delay={300}>
               <Step
                 number="4"
                 icon={<ClipboardCheck className="w-6 h-6 text-blue-600" />}
-                title="บันทึกผลอัตโนมัติ"
-                desc="ระบบบันทึกเวลาและสถานะการเข้าเรียนให้ทันที"
+                title="บันทึกผล"
+                desc="ระบบตรวจ session เวลา และการเช็คซ้ำก่อนเขียนลงฐานข้อมูล"
               />
             </Reveal>
           </div>

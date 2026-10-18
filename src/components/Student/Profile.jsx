@@ -1,4 +1,4 @@
-import React, { useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   ScanFace,
@@ -19,7 +19,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import StudentLayout from "./StudentLayout";
-import { updateProfile, useFaceRegistration, useProfile } from "./studentData";
+import { updateProfile, useFaceRegistration, useProfile, useStudentData } from "./studentData";
 import { t, fmtDateLong, fmtDateTime } from "./i18n";
 
 // ช่องที่นักศึกษาแก้ไขเองได้ (ข้อมูลอื่นต้องให้อาจารย์/เจ้าหน้าที่แก้)
@@ -39,12 +39,16 @@ const FIELDS = [
 ];
 
 export default function Profile() {
+  const { checkins } = useStudentData();
   const profile = useProfile();
   const face = useFaceRegistration();
   const fileRef = useRef(null);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState({});
   const [msg, setMsg] = useState({ tone: "", text: "" });
+  const attendedCount = checkins.filter((item) => item.status !== "absent").length;
+  const absentCount = checkins.filter((item) => item.status === "absent").length;
+  const attendanceRate = checkins.length ? ((attendedCount / checkins.length) * 100).toFixed(1) : "0.0";
 
   const startEdit = () => {
     setDraft(Object.fromEntries(EDITABLE.map((k) => [k, profile[k]])));
@@ -52,19 +56,23 @@ export default function Profile() {
     setEditing(true);
   };
 
-  const save = () => {
+  const save = async () => {
     const phone = (draft.phone || "").trim();
     if (phone && !/^[0-9+\-\s]{9,15}$/.test(phone)) {
       setMsg({ tone: "error", text: t("รูปแบบเบอร์โทรศัพท์ไม่ถูกต้อง") });
       return;
     }
-    updateProfile({ nickname: (draft.nickname || "").trim(), phone, address: (draft.address || "").trim() });
-    setEditing(false);
-    setMsg({ tone: "success", text: t("บันทึกข้อมูลเรียบร้อยแล้ว") });
+    try {
+      await updateProfile({ nickname: (draft.nickname || "").trim(), phone, address: (draft.address || "").trim() });
+      setEditing(false);
+      setMsg({ tone: "success", text: t("บันทึกข้อมูลเรียบร้อยแล้ว") });
+    } catch (error) {
+      setMsg({ tone: "error", text: error.message });
+    }
   };
 
   // เปลี่ยนรูปโปรไฟล์: ย่อรูปให้เล็กก่อนเก็บ เพื่อไม่ให้เกินพื้นที่ของเบราว์เซอร์
-  const onPickAvatar = (e) => {
+  const onPickAvatar = async (e) => {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
@@ -74,16 +82,20 @@ export default function Profile() {
     }
     const img = new Image();
     const url = URL.createObjectURL(file);
-    img.onload = () => {
+    img.onload = async () => {
       const size = 200;
       const canvas = document.createElement("canvas");
       canvas.width = size;
       canvas.height = size;
       const s = Math.min(img.width, img.height);
       canvas.getContext("2d").drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, 0, 0, size, size);
-      updateProfile({ avatar: canvas.toDataURL("image/jpeg", 0.85) });
+      try {
+        await updateProfile({ avatar: canvas.toDataURL("image/jpeg", 0.85) });
+        setMsg({ tone: "success", text: t("เปลี่ยนรูปโปรไฟล์แล้ว") });
+      } catch (error) {
+        setMsg({ tone: "error", text: error.message });
+      }
       URL.revokeObjectURL(url);
-      setMsg({ tone: "success", text: t("เปลี่ยนรูปโปรไฟล์แล้ว") });
     };
     img.onerror = () => setMsg({ tone: "error", text: t("ไม่สามารถอ่านไฟล์รูปนี้ได้") });
     img.src = url;
@@ -220,9 +232,9 @@ export default function Profile() {
         <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
           <h3 className="font-bold text-slate-900 mb-4">{t("ข้อมูลการเข้าเรียน")}</h3>
           <div className="space-y-2">
-            <InfoRow to="/courses" icon={<CheckCircle2 className="w-5 h-5 text-emerald-600" />} iconBg="bg-emerald-100" label={t("อัตราการเข้าเรียนเฉลี่ย")} value="94.2%" />
-            <InfoRow to="/history" icon={<CalendarCheck className="w-5 h-5 text-blue-600" />} iconBg="bg-blue-100" label={t("เช็คชื่อทั้งหมด")} value={t("120 ครั้ง")} />
-            <InfoRow to="/history" icon={<BarChart3 className="w-5 h-5 text-amber-600" />} iconBg="bg-amber-100" label={t("ขาดเรียน")} value={t("7 ครั้ง")} />
+            <InfoRow to="/courses" icon={<CheckCircle2 className="w-5 h-5 text-emerald-600" />} iconBg="bg-emerald-100" label={t("อัตราการเข้าเรียนเฉลี่ย")} value={`${attendanceRate}%`} />
+            <InfoRow to="/history" icon={<CalendarCheck className="w-5 h-5 text-blue-600" />} iconBg="bg-blue-100" label={t("เช็คชื่อทั้งหมด")} value={t("{n} ครั้ง", { n: checkins.length })} />
+            <InfoRow to="/history" icon={<BarChart3 className="w-5 h-5 text-amber-600" />} iconBg="bg-amber-100" label={t("ขาดเรียน")} value={t("{n} ครั้ง", { n: absentCount })} />
           </div>
         </div>
 
@@ -235,7 +247,7 @@ export default function Profile() {
               {face.registered ? (
                 <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-600 text-xs font-semibold px-2.5 py-1 rounded-full">
                   <CheckCircle2 className="w-3.5 h-3.5" />
-                  {t("ลงทะเบียนแล้ว")}
+                  {t(face.approvalStatus === "approved" ? "อนุมัติแล้ว" : "รออนุมัติ")}
                 </span>
               ) : (
                 <span className="inline-flex items-center gap-1 bg-amber-100 text-amber-600 text-xs font-semibold px-2.5 py-1 rounded-full">
@@ -252,7 +264,7 @@ export default function Profile() {
               <div>
                 <div className="text-sm font-semibold text-slate-800">{t("สถานะการลงทะเบียน")}</div>
                 <div className="text-xs text-slate-500">
-                  {face.registered ? t("ใบหน้าของคุณถูกลงทะเบียนแล้ว") : t("กรุณาลงทะเบียนใบหน้าก่อนเช็คชื่อ")}
+                  {face.registered ? t(face.approvalStatus === "approved" ? "ใบหน้าได้รับการอนุมัติแล้ว" : "ส่งรูปแล้ว รออาจารย์ตรวจสอบ") : t("กรุณาลงทะเบียนใบหน้า")}
                 </div>
                 {face.registered && face.at && <div className="text-xs text-slate-400 mt-0.5">{t("ลงทะเบียนเมื่อ {date}", { date: fmtDateTime(face.at) })}</div>}
               </div>
@@ -263,7 +275,7 @@ export default function Profile() {
               className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 transition-colors text-white text-sm font-semibold py-3 rounded-xl"
             >
               <UserPlus className="w-4 h-4" />
-              {face.registered ? t("อัปเดตข้อมูลใบหน้า") : t("ลงทะเบียนใบหน้า")}
+              {face.registered ? t("ส่งรูปใบหน้าใหม่") : t("ลงทะเบียนใบหน้า")}
             </Link>
           </div>
 

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   CalendarDays,
@@ -28,6 +28,7 @@ import {
 import StudentLayout from "./StudentLayout";
 import { clearLoginSession, resetPrefs, updatePrefs, usePrefs, useProfile } from "./studentData";
 import { t, LANG, setLanguage } from "./i18n";
+import { clearStudentToken, deleteStudentAccount, updateStudentPassword } from "./studentApi";
 
 const settingsTabs = [
   { id: "personal", icon: User, label: t("ข้อมูลส่วนตัว"), sub: t("แก้ไขข้อมูลส่วนตัวของคุณ") },
@@ -62,15 +63,16 @@ const FAQ = [
   },
 ];
 
-function Toggle({ checked, onChange, label }) {
+function Toggle({ checked, onChange, label, disabled = false }) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
       aria-label={label}
+      disabled={disabled}
       onClick={() => onChange(!checked)}
-      className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${checked ? "bg-blue-600" : "bg-slate-200"}`}
+      className={`relative w-11 h-6 rounded-full transition-colors shrink-0 disabled:cursor-not-allowed disabled:opacity-50 ${checked ? "bg-blue-600" : "bg-slate-200"}`}
     >
       <span
         className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${
@@ -93,7 +95,7 @@ export default function Settings() {
   const navigate = useNavigate();
   const location = useLocation();
   const profile = useProfile();
-  const { colorMode, fontSize, notif, twoFA } = usePrefs();
+  const { colorMode, fontSize, notif } = usePrefs();
 
   // /settings#security (เช่นจากหน้าโปรไฟล์) = เปิดฟอร์มเปลี่ยนรหัสผ่านทันที
   const initialTab = location.hash.slice(1);
@@ -109,19 +111,9 @@ export default function Settings() {
   const [deleteText, setDeleteText] = useState("");
   const [notice, setNotice] = useState("");
 
-  const refs = {
-    personal: useRef(null),
-    security: useRef(null),
-    notifications: useRef(null),
-    theme: useRef(null),
-    language: useRef(null),
-    help: useRef(null),
-    about: useRef(null),
-  };
-
   const handleTabClick = (id) => {
     setActiveTab(id);
-    refs[id].current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    document.getElementById(`settings-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
   useEffect(() => {
@@ -132,17 +124,21 @@ export default function Settings() {
 
   const setNotif = (patch) => updatePrefs({ notif: { ...notif, ...patch } });
 
-  // TODO: เมื่อเชื่อม backend แล้ว ให้ส่ง current/next ไปที่ API เปลี่ยนรหัสผ่าน
-  const changePassword = () => {
+  const changePassword = async () => {
     if (!pw.current) return setPwMsg({ tone: "error", text: t("กรุณากรอกรหัสผ่านปัจจุบัน") });
     if (pw.next.length < 8) return setPwMsg({ tone: "error", text: t("รหัสผ่านใหม่ต้องมีอย่างน้อย 8 ตัวอักษร") });
     if (!/[A-Za-z]/.test(pw.next) || !/\d/.test(pw.next))
       return setPwMsg({ tone: "error", text: t("รหัสผ่านใหม่ต้องมีทั้งตัวอักษรและตัวเลข") });
     if (pw.next === pw.current) return setPwMsg({ tone: "error", text: t("รหัสผ่านใหม่ต้องไม่ซ้ำกับรหัสผ่านเดิม") });
     if (pw.next !== pw.confirm) return setPwMsg({ tone: "error", text: t("รหัสผ่านใหม่และการยืนยันไม่ตรงกัน") });
-    setPw({ current: "", next: "", confirm: "" });
-    setShowPwForm(false);
-    setPwMsg({ tone: "success", text: t("เปลี่ยนรหัสผ่านเรียบร้อยแล้ว") });
+    try {
+      await updateStudentPassword(pw.current, pw.next);
+      setPw({ current: "", next: "", confirm: "" });
+      setShowPwForm(false);
+      setPwMsg({ tone: "success", text: t("เปลี่ยนรหัสผ่านเรียบร้อยแล้ว") });
+    } catch (error) {
+      setPwMsg({ tone: "error", text: error.message });
+    }
   };
 
   const flash = (text) => {
@@ -150,15 +146,25 @@ export default function Settings() {
     setTimeout(() => setNotice(""), 2500);
   };
 
-  const onReset = () => {
+  const onReset = async () => {
     if (window.confirm(t("รีเซ็ตธีม ขนาดตัวอักษร และการแจ้งเตือนกลับเป็นค่าเริ่มต้น?"))) {
-      resetPrefs();
-      flash(t("รีเซ็ตการตั้งค่าเรียบร้อยแล้ว"));
+      try {
+        const saved = await resetPrefs();
+        if (!saved) return;
+        flash(t("รีเซ็ตการตั้งค่าเรียบร้อยแล้ว"));
+      } catch (error) {
+        flash(error.message);
+      }
     }
   };
 
-  // TODO: เมื่อเชื่อม backend แล้ว ให้ส่งคำขอลบบัญชีไปที่ API ก่อนออกจากระบบ
-  const onDeleteAccount = () => {
+  const onDeleteAccount = async () => {
+    try {
+      await deleteStudentAccount();
+    } catch (error) {
+      flash(error.message);
+      return;
+    }
     try {
       Object.keys(localStorage)
         .filter((k) => k.startsWith("faceattend_"))
@@ -166,6 +172,7 @@ export default function Settings() {
     } catch {
       // ignore
     }
+    clearStudentToken();
     clearLoginSession();
     navigate("/login", { replace: true });
   };
@@ -209,7 +216,7 @@ export default function Settings() {
         {/* Right content */}
         <div className="space-y-5">
           {/* Personal info */}
-          <div ref={refs.personal} id="settings-personal" className="scroll-mt-6 bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
+          <div id="settings-personal" className="scroll-mt-6 bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
             <div className="flex items-center justify-between mb-5">
               <h3 className="font-bold text-slate-900">{t("ข้อมูลส่วนตัว")}</h3>
               <Link
@@ -253,7 +260,7 @@ export default function Settings() {
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
             <div className="space-y-5">
               {/* Security */}
-              <div ref={refs.security} id="settings-security" className="scroll-mt-6 bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
+              <div id="settings-security" className="scroll-mt-6 bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
                 <h3 className="font-bold text-slate-900 mb-4">{t("ความปลอดภัย")}</h3>
                 <div className="space-y-1">
                   <SettingRow
@@ -320,17 +327,8 @@ export default function Settings() {
                     icon={<ShieldCheck className="w-5 h-5 text-emerald-600" />}
                     iconBg="bg-emerald-100"
                     title={t("การยืนยันตัวตนสองขั้นตอน (2FA)")}
-                    sub={twoFA ? t("เปิดใช้งานแล้ว") : t("เพิ่มความปลอดภัยให้กับบัญชีของคุณ")}
-                    action={
-                      <Toggle
-                        label={t("การยืนยันตัวตนสองขั้นตอน")}
-                        checked={twoFA}
-                        onChange={(v) => {
-                          updatePrefs({ twoFA: v });
-                          flash(v ? t("เปิดการยืนยันตัวตนสองขั้นตอนแล้ว") : t("ปิดการยืนยันตัวตนสองขั้นตอนแล้ว"));
-                        }}
-                      />
-                    }
+                    sub={t("ยังไม่ได้ตั้งค่าบริการยืนยันตัวตนสองขั้นตอน")}
+                    action={<span className="text-xs text-slate-400">{t("ยังไม่พร้อมใช้งาน")}</span>}
                   />
                   <SettingRow
                     icon={<Smartphone className="w-5 h-5 text-purple-600" />}
@@ -376,7 +374,7 @@ export default function Settings() {
               </div>
 
               {/* Notifications */}
-              <div ref={refs.notifications} id="settings-notifications" className="scroll-mt-6 bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
+              <div id="settings-notifications" className="scroll-mt-6 bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
                 <h3 className="font-bold text-slate-900 mb-4">{t("การแจ้งเตือน")}</h3>
                 <div className="space-y-1">
                   <SettingRow
@@ -391,7 +389,10 @@ export default function Settings() {
                     iconBg="bg-emerald-100"
                     title={t("แจ้งเตือนตารางเรียน")}
                     sub={t("รับการแจ้งเตือนก่อนเวลาเรียน")}
-                    action={<Toggle label={t("แจ้งเตือนตารางเรียน")} checked={notif.schedule} onChange={(v) => setNotif({ schedule: v })} />}
+                    action={<Toggle label={t("แจ้งเตือนตารางเรียน")} checked={notif.schedule} onChange={async (v) => {
+                      if (v && "Notification" in window && Notification.permission === "default") await Notification.requestPermission();
+                      setNotif({ schedule: v });
+                    }} />}
                   />
                   <SettingRow
                     icon={<Megaphone className="w-5 h-5 text-amber-600" />}
@@ -406,8 +407,8 @@ export default function Settings() {
                         icon={<Mail className="w-5 h-5 text-sky-600" />}
                         iconBg="bg-sky-100"
                         title={t("แจ้งเตือนทางอีเมล")}
-                        sub={t("ส่งสรุปไปที่ {email}", { email: profile.email })}
-                        action={<Toggle label={t("แจ้งเตือนทางอีเมล")} checked={notif.email} onChange={(v) => setNotif({ email: v })} />}
+                        sub={t("ต้องตั้งค่า SMTP ก่อนจึงจะส่งอีเมลได้")}
+                        action={<span className="text-xs text-slate-400">{t("ยังไม่พร้อมใช้งาน")}</span>}
                       />
                       <SettingRow
                         icon={<Volume2 className="w-5 h-5 text-rose-600" />}
@@ -433,7 +434,7 @@ export default function Settings() {
 
             <div className="space-y-5">
               {/* Theme & display */}
-              <div ref={refs.theme} id="settings-theme" className="scroll-mt-6 bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
+              <div id="settings-theme" className="scroll-mt-6 bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
                 <h3 className="font-bold text-slate-900 mb-4">{t("ธีมและการแสดงผล")}</h3>
 
                 <div className="mb-5">
@@ -483,7 +484,7 @@ export default function Settings() {
                   </div>
                 </div>
 
-                <div ref={refs.language} id="settings-language" className="scroll-mt-6">
+                <div id="settings-language" className="scroll-mt-6">
                   <label htmlFor="student-language" className="block text-xs text-slate-500 font-medium mb-2">
                     {t("ภาษาของระบบ")}
                   </label>
@@ -492,7 +493,16 @@ export default function Settings() {
                     <select
                       id="student-language"
                       value={LANG}
-                      onChange={(e) => setLanguage(e.target.value)}
+                      onChange={async (e) => {
+                        const language = e.target.value;
+                        try {
+                          const saved = await updatePrefs({ language });
+                          if (!saved) return;
+                          setLanguage(language);
+                        } catch (error) {
+                          flash(error.message);
+                        }
+                      }}
                       className="w-full appearance-none border border-slate-200 rounded-xl pl-10 pr-10 py-2.5 text-sm text-slate-700 font-medium bg-white focus:outline-none focus:ring-2 focus:ring-blue-200"
                     >
                       <option value="th">{t("ภาษาไทย")}</option>
@@ -574,7 +584,7 @@ export default function Settings() {
 
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 items-start">
             {/* Help */}
-            <div ref={refs.help} id="settings-help" className="scroll-mt-6 bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
+            <div id="settings-help" className="scroll-mt-6 bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
               <h3 className="font-bold text-slate-900 mb-4">{t("ช่วยเหลือ / คำถามที่พบบ่อย")}</h3>
               <div className="divide-y divide-slate-100">
                 {FAQ.map((item, i) => (
@@ -604,7 +614,7 @@ export default function Settings() {
             </div>
 
             {/* About */}
-            <div ref={refs.about} id="settings-about" className="scroll-mt-6 bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
+            <div id="settings-about" className="scroll-mt-6 bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
               <h3 className="font-bold text-slate-900 mb-4">{t("เกี่ยวกับระบบ")}</h3>
               <div className="divide-y divide-slate-100 text-sm">
                 {[

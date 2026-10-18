@@ -1,45 +1,25 @@
-import React, { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { User, Camera, CheckCircle2, Clock, AlertTriangle, Info, MapPin, Users, ArrowRight, Code2 } from "lucide-react";
 import StudentLayout from "./StudentLayout";
 import { t } from "./i18n";
-
-
-const historyItems = [
-  {
-    time: "08:05:32",
-    date: t("20 พ.ค. 2567"),
-    code: "CS-201",
-    name: t("โครงสร้างข้อมูล"),
-    status: "success",
-    badge: t("เข้าเรียน"),
-  },
-  {
-    time: "10:20:15",
-    date: t("20 พ.ค. 2567"),
-    code: "CS-202",
-    name: t("การเขียนโปรแกรมเชิงวัตถุ"),
-    status: "late",
-    badge: t("รอเช็คชื่อ"),
-  },
-  {
-    time: "13:30:00",
-    date: t("20 พ.ค. 2567"),
-    code: "CS-203",
-    name: t("ฐานข้อมูล"),
-    status: "absent",
-    badge: t("ยังไม่ถึงเวลา"),
-  },
-];
+import { fetchStudentCheckinOptions, submitStudentCheckin } from "./studentApi";
+import { usePrefs, useStudentData } from "./studentData";
 
 export default function CheckIn() {
   const navigate = useNavigate();
   const [currentTime, setCurrentTime] = useState(new Date());
   const [cameraError, setCameraError] = useState(null);
+  const [cameraReady, setCameraReady] = useState(false);
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const [scanPhase, setScanPhase] = useState(0);
   const [cameraKey, setCameraKey] = useState(0); // เพิ่มค่าเพื่อเปิดกล้องใหม่
+  const { checkins, refresh } = useStudentData();
+  const { notif } = usePrefs();
+  const [checkinOptions, setCheckinOptions] = useState([]);
+  const [selectedSession, setSelectedSession] = useState("");
+  const [checkinState, setCheckinState] = useState({ loading: false, error: "", result: null });
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
@@ -63,8 +43,12 @@ export default function CheckIn() {
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
         }
+        setCameraReady(true);
       } catch (err) {
-        if (!cancelled) setCameraError(err.message || t("ไม่สามารถเปิดกล้องได้"));
+        if (!cancelled) {
+          setCameraReady(false);
+          setCameraError(err.message || t("ไม่สามารถเปิดกล้องได้"));
+        }
       }
     }
     startCamera();
@@ -77,6 +61,15 @@ export default function CheckIn() {
     };
   }, [cameraKey]);
 
+  useEffect(() => {
+    fetchStudentCheckinOptions()
+      .then((options) => {
+        setCheckinOptions(options);
+        setSelectedSession((current) => current || String(options.find((option) => option.open && !option.checked)?.sessionId || ""));
+      })
+      .catch((error) => setCheckinState((state) => ({ ...state, error: error.message })));
+  }, []);
+
   // ยกเลิกการเช็คชื่อ: ปิดกล้องแล้วกลับหน้าหลัก
   const cancelCheckin = () => {
     streamRef.current?.getTracks().forEach((tr) => tr.stop());
@@ -84,27 +77,43 @@ export default function CheckIn() {
     navigate("/dashboard");
   };
 
-  // จำลองขั้นตอนการสแกน/ยืนยันตัวตน (จะแทนที่ด้วยผลจริงจากโมเดล face-recognition ภายหลัง)
-  useEffect(() => {
-    const phases = [
-      { delay: 3000, phase: 1 },
-      { delay: 5000, phase: 2 },
-      { delay: 8000, phase: 0 },
-    ];
-    const timeouts = phases.map((p) => setTimeout(() => setScanPhase(p.phase), p.delay));
-    const loop = setInterval(() => {
+  const activeOption = checkinOptions.find((option) => String(option.sessionId) === selectedSession);
+  const today = new Date().toISOString().slice(0, 10);
+  const todayHistory = checkins.filter((item) => item.iso === today);
+
+  const confirmCheckin = async () => {
+    if (!activeOption || !activeOption.open || activeOption.checked || !activeOption.manualAllowed) return;
+    setCheckinState({ loading: true, error: "", result: null });
+    try {
+      const result = await submitStudentCheckin(activeOption.sessionId);
+      setCheckinState({ loading: false, error: "", result });
+      setScanPhase(2);
+      if (notif.sound && typeof AudioContext !== "undefined") {
+        const audioContext = new AudioContext();
+        const oscillator = audioContext.createOscillator();
+        const gain = audioContext.createGain();
+        oscillator.frequency.value = 880;
+        gain.gain.setValueAtTime(0.12, audioContext.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.2);
+        oscillator.connect(gain);
+        gain.connect(audioContext.destination);
+        oscillator.start();
+        oscillator.stop(audioContext.currentTime + 0.2);
+        oscillator.onended = () => audioContext.close();
+      }
+      await refresh();
+      setCheckinOptions(await fetchStudentCheckinOptions());
+    } catch (error) {
+      setCheckinState({ loading: false, error: error.message, result: null });
       setScanPhase(0);
-      phases.forEach((p) => setTimeout(() => setScanPhase(p.phase), p.delay));
-    }, 10000);
-    return () => {
-      timeouts.forEach(clearTimeout);
-      clearInterval(loop);
-    };
-  }, []);
+    }
+  };
 
   const getRemainingMinutes = () => {
+    if (!activeOption?.startTime) return "-";
+    const [hour, minute] = activeOption.startTime.split(":").map(Number);
     const end = new Date(currentTime);
-    end.setHours(9, 0, 0, 0);
+    end.setHours(hour, minute + activeOption.closeOffset, 0, 0);
     const diff = end - currentTime;
     if (diff <= 0) return "0:00";
     return `${Math.floor(diff / 60000)}:${String(Math.floor((diff % 60000) / 1000)).padStart(
@@ -114,28 +123,26 @@ export default function CheckIn() {
   };
 
   const getToastContent = () => {
-    if (scanPhase === 1)
-      return { icon: "✓", scanning: false, title: t("ตรวจจับใบหน้าแล้ว"), subtitle: t("กำลังยืนยันตัวตน...") };
-    if (scanPhase === 2)
-      return { icon: "✓", scanning: false, title: t("ยืนยันตัวตนสำเร็จ"), subtitle: t("บันทึกการเข้าเรียนแล้ว") };
-    return { icon: "⟳", scanning: true, title: t("กำลังสแกนใบหน้า..."), subtitle: t("กรุณามองที่กล้อง") };
+    if (checkinState.loading) return { icon: "…", scanning: true, title: t("กำลังบันทึกการเช็คชื่อ..."), subtitle: t("กำลังตรวจสอบกับฐานข้อมูล") };
+    if (scanPhase === 2 && checkinState.result) return { icon: "✓", scanning: false, title: t("บันทึกการเช็คชื่อแล้ว"), subtitle: checkinState.result.status };
+    return { icon: "!", scanning: false, title: t("การตรวจใบหน้ายังไม่พร้อมใช้งาน"), subtitle: t("เลือกคาบที่เปิดและใช้ manual fallback หากรายวิชาอนุญาต") };
   };
 
   const toast = getToastContent();
-  const borderColor = scanPhase >= 1 ? "#22c55e" : "#3b82f6";
+  const borderColor = scanPhase === 2 ? "#22c55e" : "#3b82f6";
 
   const statusIcon = (s) => {
-    if (s === "success") return <CheckCircle2 className="w-4 h-4" />;
+    if (s === "success" || s === "ontime") return <CheckCircle2 className="w-4 h-4" />;
     if (s === "late") return <Clock className="w-4 h-4" />;
     return <AlertTriangle className="w-4 h-4" />;
   };
   const statusBg = (s) => {
-    if (s === "success") return "bg-emerald-50 text-emerald-600";
+    if (s === "success" || s === "ontime") return "bg-emerald-50 text-emerald-600";
     if (s === "late") return "bg-amber-50 text-amber-600";
     return "bg-slate-100 text-slate-400";
   };
   const badgeBg = (s) => {
-    if (s === "success") return "bg-emerald-50 text-emerald-600";
+    if (s === "success" || s === "ontime") return "bg-emerald-50 text-emerald-600";
     if (s === "late") return "bg-amber-50 text-amber-600";
     return "bg-slate-100 text-slate-400";
   };
@@ -145,7 +152,7 @@ export default function CheckIn() {
       <div>
         <h1 className="text-2xl font-bold text-slate-900">{t("เช็คชื่อเข้าเรียน")}</h1>
         <p className="text-sm text-slate-500 mt-1">
-          {t("สแกนใบหน้าของคุณเพื่อเช็คชื่อเข้าเรียน")}
+          {t("เช็คชื่อจากคาบที่เปิดและใช้ manual fallback ตามที่รายวิชาอนุญาต")}
         </p>
       </div>
 
@@ -170,12 +177,12 @@ export default function CheckIn() {
                 <div className="ml-auto shrink-0">
                   <div className="flex items-center gap-3">
                     <div className="text-[10px] text-slate-500">{t("เวลาเปิดเช็คชื่อ")}</div>
-                    <div className="text-xl font-bold text-slate-900">08:30</div>
+                    <div className="text-xl font-bold text-slate-900">{activeOption?.startTime || "--:--"}</div>
                     <div className="text-sm text-slate-400">-</div>
-                    <div className="text-xl font-bold text-slate-900">09:00</div>
-                    <div className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-600">
+                    <div className="text-xl font-bold text-slate-900">{activeOption?.startTime ? (() => { const [hour, minute] = activeOption.startTime.split(":").map(Number); const close = new Date(); close.setHours(hour, minute + activeOption.closeOffset, 0, 0); return close.toTimeString().slice(0, 5); })() : "--:--"}</div>
+                    <div className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold ${activeOption?.open ? "bg-emerald-50 text-emerald-600" : "bg-slate-100 text-slate-500"}`}>
                       <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                      {t("เปิดเช็คชื่ออยู่")}
+                      {activeOption?.open ? t("เปิดเช็คชื่ออยู่") : t("ไม่มีคาบที่เปิด")}
                     </div>
                   </div>
                   <div className="flex items-center gap-2 mt-1">
@@ -197,11 +204,11 @@ export default function CheckIn() {
               <div className="absolute top-4 left-4 z-10 flex items-center gap-2 bg-black/50 backdrop-blur-sm px-4 py-2 rounded-full">
                 <span
                   className={`w-2.5 h-2.5 rounded-full ${
-                    cameraError ? "bg-red-500" : "bg-emerald-500 animate-pulse"
+                    cameraError ? "bg-red-500" : cameraReady ? "bg-emerald-500 animate-pulse" : "bg-amber-500"
                   }`}
                 />
                 <span className="text-sm text-slate-200 font-medium">
-                  {cameraError ? t("กล้องไม่พร้อม") : t("กล้องกำลังทำงาน")}
+                  {cameraError ? t("กล้องไม่พร้อม") : cameraReady ? t("กล้องกำลังทำงาน") : t("กำลังเปิดกล้อง...")}
                 </span>
               </div>
 
@@ -295,6 +302,18 @@ export default function CheckIn() {
 
             {/* Cancel */}
             <div className="px-6 py-4 border-t border-slate-100">
+              <label className="block text-xs font-medium text-slate-500 mb-2" htmlFor="checkin-session">{t("เลือกคาบเรียน")}</label>
+              <select id="checkin-session" value={selectedSession} onChange={(event) => setSelectedSession(event.target.value)} className="w-full mb-3 border border-slate-200 rounded-xl px-3 py-2.5 text-sm bg-white">
+                <option value="">{t("เลือกคาบที่เปิดเช็คชื่อ")}</option>
+                {checkinOptions.map((option) => <option key={option.sessionId} value={option.sessionId}>{option.code} • {option.name} • {option.startTime}</option>)}
+              </select>
+              {activeOption?.manualAllowed && activeOption.open && !activeOption.checked && (
+                <button type="button" onClick={confirmCheckin} disabled={checkinState.loading} className="w-full mb-3 py-3 rounded-xl bg-blue-600 text-white text-sm font-semibold disabled:opacity-50">
+                  {checkinState.loading ? t("กำลังบันทึก...") : t("ยืนยันเช็คชื่อแบบสำรอง (Manual)")}
+                </button>
+              )}
+              {!checkinOptions.length && <p className="mb-3 text-xs text-slate-400">{t("ยังไม่มีคาบเช็คชื่อวันนี้จากฐานข้อมูล")}</p>}
+              {checkinState.error && <p role="alert" className="mb-3 text-sm text-red-600">{checkinState.error}</p>}
               <button
                 type="button"
                 onClick={cancelCheckin}
@@ -312,7 +331,7 @@ export default function CheckIn() {
           <div className="rounded-2xl bg-white border border-slate-200 shadow-sm p-6">
             <div className="flex items-center justify-between mb-4">
               <div className="text-sm font-semibold text-slate-900">{t("ข้อมูลรายวิชา")}</div>
-              <Link to="/courses?open=CS-201" className="text-xs text-blue-600 font-medium hover:underline">
+                <Link to={activeOption ? `/courses?open=${activeOption.code}` : "/courses"} className="text-xs text-blue-600 font-medium hover:underline">
                 {t("ดูรายละเอียด")}
               </Link>
             </div>
@@ -322,8 +341,8 @@ export default function CheckIn() {
                 <Code2 className="w-6 h-6" />
               </div>
               <div>
-                <div className="text-lg font-extrabold text-slate-900">CS-201</div>
-                <div className="text-xs text-slate-500">{t("โครงสร้างข้อมูล (Data Structures)")}</div>
+                <div className="text-lg font-extrabold text-slate-900">{activeOption?.code || "-"}</div>
+                <div className="text-xs text-slate-500">{activeOption?.name || t("ยังไม่ได้เลือกคาบ")}</div>
               </div>
             </div>
 
@@ -333,7 +352,7 @@ export default function CheckIn() {
                   <User className="w-4 h-4" />
                 </div>
                 <div>
-                  <div className="text-slate-900 font-semibold">{t("อาจารย์ณัฐวุฒิ อาจารย์")}</div>
+                  <div className="text-slate-900 font-semibold">{t("รายวิชาจากฐานข้อมูล")}</div>
                   <div className="text-xs text-slate-500">{t("อาจารย์ผู้สอน")}</div>
                 </div>
               </div>
@@ -342,7 +361,7 @@ export default function CheckIn() {
                   <MapPin className="w-4 h-4" />
                 </div>
                 <div>
-                  <div className="text-slate-900 font-semibold">CS-201</div>
+                  <div className="text-slate-900 font-semibold">{activeOption?.room || "-"}</div>
                   <div className="text-xs text-slate-500">{t("ห้องเรียน")}</div>
                 </div>
               </div>
@@ -351,8 +370,8 @@ export default function CheckIn() {
                   <Clock className="w-4 h-4" />
                 </div>
                 <div>
-                  <div className="text-slate-900 font-semibold">{t("จันทร์ 10:30 - 12:00")}</div>
-                  <div className="text-xs text-slate-500">{t("เวลาเรียน")}</div>
+                  <div className="text-slate-900 font-semibold">{activeOption?.startTime || "-"}</div>
+                  <div className="text-xs text-slate-500">{t("เวลาเริ่มเช็คชื่อ")}</div>
                 </div>
               </div>
               <div className="flex items-center gap-3">
@@ -360,8 +379,8 @@ export default function CheckIn() {
                   <Users className="w-4 h-4" />
                 </div>
                 <div>
-                  <div className="text-slate-900 font-semibold">{t("32 คน")}</div>
-                  <div className="text-xs text-slate-500">{t("จำนวนนักศึกษา")}</div>
+                  <div className="text-slate-900 font-semibold">{activeOption?.manualAllowed ? t("รองรับ manual") : t("ไม่อนุญาต")}</div>
+                  <div className="text-xs text-slate-500">{t("เงื่อนไขการเช็คชื่อ")}</div>
                 </div>
               </div>
             </div>
@@ -395,9 +414,9 @@ export default function CheckIn() {
               </Link>
             </div>
             <div className="space-y-3">
-              {historyItems.map((item, i) => (
+              {todayHistory.map((item) => (
                 <div
-                  key={i}
+                  key={item.id}
                   className="flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3"
                 >
                   <div className="flex items-center gap-3 min-w-0">
@@ -411,7 +430,7 @@ export default function CheckIn() {
                     <div className="min-w-0">
                       <div className="text-sm font-bold text-slate-900">{item.time}</div>
                       <div className="text-xs text-slate-400 truncate">
-                        {item.date} • {item.code} {item.name}
+                        {item.iso} • {item.code}
                       </div>
                     </div>
                   </div>
@@ -420,10 +439,11 @@ export default function CheckIn() {
                       item.status
                     )}`}
                   >
-                    {item.badge}
+                    {t(item.status === "ontime" ? "เข้าเรียน" : item.status === "late" ? "สาย" : "ขาดเรียน")}
                   </span>
                 </div>
               ))}
+              {!todayHistory.length && <p className="text-sm text-slate-400">{t("วันนี้ยังไม่มีประวัติเช็คชื่อ")}</p>}
             </div>
 
             <Link
